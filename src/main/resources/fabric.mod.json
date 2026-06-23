@@ -1,0 +1,37 @@
+{
+	"schemaVersion": 1,
+	"id": "craftproxy",
+	"version": "${version}",
+	"name": "CraftProxy",
+	"description": "Host your Minecraft World to the public. Only the Host needs the Mod!",
+	"authors": [
+		"Timeox2k"
+	],
+	"contact": {
+		"homepage": "https://craftproxy.net"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/mctunnel/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"net.mctunnel.mod.MCTunnel"
+		],
+		"client": [
+			"net.mctunnel.mod.client.MCTunnelClient"
+		]
+	},
+	"mixins": [
+		"mctunnel.mixins.json",
+		{
+			"config": "mctunnel.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

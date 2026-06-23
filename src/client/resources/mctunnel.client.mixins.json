@@ -1,0 +1,15 @@
+{
+	"required": true,
+	"package": "net.mctunnel.mod.client.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"IpSpoofMixin",
+		"ConnectionAccessorMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}
