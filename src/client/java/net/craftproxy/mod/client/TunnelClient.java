@@ -1,4 +1,4 @@
-package net.mctunnel.mod.client;
+package net.craftproxy.mod.client;
 
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;

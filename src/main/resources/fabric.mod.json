@@ -11,22 +11,18 @@
 		"homepage": "https://craftproxy.net"
 	},
 	"license": "CC0-1.0",
-	"icon": "assets/mctunnel/icon.png",
+	"icon": "assets/craftproxy/icon.png",
 	"environment": "*",
 	"entrypoints": {
 		"main": [
-			"net.mctunnel.mod.MCTunnel"
+			"net.craftproxy.mod.CraftProxy"
 		],
 		"client": [
-			"net.mctunnel.mod.client.MCTunnelClient"
+			"net.craftproxy.mod.client.MCTunnelClient"
 		]
 	},
 	"mixins": [
-		"mctunnel.mixins.json",
-		{
-			"config": "mctunnel.client.mixins.json",
-			"environment": "client"
-		}
+
 	],
 	"depends": {
 		"fabricloader": ">=0.19.3",

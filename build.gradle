@@ -18,7 +18,7 @@ loom {
 	splitEnvironmentSourceSets()
 
 	mods {
-		"mctunnel" {
+		"craftproxy" {
 			sourceSet sourceSets.main
 			sourceSet sourceSets.client
 		}

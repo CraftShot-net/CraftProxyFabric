@@ -1,4 +1,4 @@
-package net.mctunnel.mod.client.mixin;
+package net.craftproxy.mod.client.mixin;
 
 import io.netty.channel.Channel;
 import net.minecraft.network.Connection;

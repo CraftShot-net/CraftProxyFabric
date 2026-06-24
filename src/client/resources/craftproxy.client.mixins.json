@@ -1,0 +1,15 @@
+{
+	"required": true,
+	"package": "net.craftproxy.mod.client.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"net.craftproxy.mod.client.mixin.IpSpoofMixin",
+		"net.craftproxy.mod.client.mixin.ConnectionAccessorMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}

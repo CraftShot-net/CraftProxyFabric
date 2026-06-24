@@ -1,6 +1,6 @@
-package net.mctunnel.mod.client.mixin;
+package net.craftproxy.mod.client.mixin;
 
-import net.mctunnel.mod.client.TunnelClient;
+import net.craftproxy.mod.client.TunnelClient;
 import net.minecraft.network.Connection;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
