@@ -30,7 +30,7 @@ public class TunnelClient {
     private volatile boolean connected = false;
     private volatile boolean intentionalDisconnect = false;
     private Consumer<String> onReadyCallback;
-
+    private static final String prefix = "§7(§6CraftProxy§7) ";
     public void connect(Consumer<String> onReady) {
         this.onReadyCallback = onReady;
         this.intentionalDisconnect = false;
@@ -46,7 +46,7 @@ public class TunnelClient {
                     @Override
                     protected void initChannel(SocketChannel ch) {
                         ch.pipeline().addLast(
-                                new LineBasedFrameDecoder(512),
+                                new LineBasedFrameDecoder(8192),
                                 new StringDecoder(StandardCharsets.UTF_8),
                                 new StringEncoder(StandardCharsets.UTF_8),
                                 new ControlHandler()
@@ -57,7 +57,8 @@ public class TunnelClient {
         bootstrap.connect(SERVER_HOST, CONTROL_PORT).addListener((ChannelFuture f) -> {
             if (f.isSuccess()) {
                 controlChannel = f.channel();
-                controlChannel.writeAndFlush("REGISTER\n");
+                String token = Minecraft.getInstance().getUser().getAccessToken();
+                controlChannel.writeAndFlush("REGISTER " + token + "\n");
                 connected = true;
             } else {
                 scheduleReconnect();
@@ -98,7 +99,6 @@ public class TunnelClient {
                 String sessionId = parts[1];
                 String playerIp = parts.length > 2 ? parts[2] : "127.0.0.1";
                 openBridge(sessionId, playerIp);
-
             } else if (msg.startsWith("BROADCAST ")) {
                 String text = msg.substring(10);
                 Minecraft mc = Minecraft.getInstance();
@@ -117,12 +117,24 @@ public class TunnelClient {
                 mc.execute(() -> {
                     if (mc.player != null) {
                         mc.player.sendSystemMessage(
-                                Component.literal("§cTunnel of Server closed.")
+                                Component.literal(prefix + "§cTunnel of Server closed.")
                         );
                     }
                 });
             } else if (msg.equals("PING")) {
                 ctx.writeAndFlush("PONG\n");
+            } else if (msg.startsWith("ERROR ")) {
+                intentionalDisconnect = true;
+                connected = false;
+                String errorMsg = msg.substring(6);
+                Minecraft mc = Minecraft.getInstance();
+                mc.execute(() -> {
+                    if (mc.player != null) {
+                        mc.player.sendSystemMessage(
+                                Component.literal(prefix + "§cTunnel Error: " + errorMsg)
+                        );
+                    }
+                });
             }
         }
 
@@ -135,7 +147,7 @@ public class TunnelClient {
                 mc.execute(() -> {
                     if (mc.player != null) {
                         mc.player.sendSystemMessage(
-                                Component.literal("§cTunnel disconnected, reconnecting...")
+                                Component.literal(prefix + "§cTunnel disconnected, reconnecting...")
                         );
                     }
                 });
@@ -158,7 +170,7 @@ public class TunnelClient {
 
         bridge.connect(SERVER_HOST, BRIDGE_PORT).addListener((ChannelFuture f) -> {
             if (!f.isSuccess()) {
-                System.out.println("[MCTunnel] Bridge connect failed for session " + sessionId);
+                System.out.println("[CraftProxy] Bridge connect failed for session " + sessionId);
             }
         });
     }
@@ -219,7 +231,7 @@ public class TunnelClient {
         }
     }
 
-    private class RelayHandler extends ChannelInboundHandlerAdapter {
+    private static class RelayHandler extends ChannelInboundHandlerAdapter {
 
         private final Channel target;
 
