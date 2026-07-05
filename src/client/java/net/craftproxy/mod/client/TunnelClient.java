@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 public class TunnelClient {
+    private static final String TRANSLATION_PREFIX = "message.craftproxy.tunnel.";
 
     public static final AttributeKey<String> PLAYER_IP = AttributeKey.valueOf("playerIp");
     private static final String SERVER_HOST = "craftproxy.net";
@@ -117,7 +118,7 @@ public class TunnelClient {
                 mc.execute(() -> {
                     if (mc.player != null) {
                         mc.player.sendSystemMessage(
-                                Component.literal(prefix + "§cTunnel of Server closed.")
+                                Component.literal(prefix + "§c" + tr("server_closed").getString())
                         );
                     }
                 });
@@ -131,7 +132,7 @@ public class TunnelClient {
                 mc.execute(() -> {
                     if (mc.player != null) {
                         mc.player.sendSystemMessage(
-                                Component.literal(prefix + "§cTunnel Error: " + errorMsg)
+                                Component.literal(prefix + "§c" + tr("error", errorMsg).getString())
                         );
                     }
                 });
@@ -147,13 +148,17 @@ public class TunnelClient {
                 mc.execute(() -> {
                     if (mc.player != null) {
                         mc.player.sendSystemMessage(
-                                Component.literal(prefix + "§cTunnel disconnected, reconnecting...")
+                                Component.literal(prefix + "§c" + tr("reconnecting").getString())
                         );
                     }
                 });
                 scheduleReconnect();
             }
         }
+    }
+
+    private static Component tr(String key, Object... args) {
+        return Component.translatable(TRANSLATION_PREFIX + key, args);
     }
 
     private void openBridge(String sessionId, String playerIp) {
