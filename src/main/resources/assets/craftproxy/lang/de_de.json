@@ -29,5 +29,8 @@
   "message.craftproxy.client.tunnel_active": "✔ Tunnel aktiv!",
   "message.craftproxy.client.share_ip_prefix": "Teile diese IP mit deinen Freunden: ",
   "message.craftproxy.client.click_to_copy": "Klicken zum Kopieren",
-  "message.craftproxy.client.open_friends_button": "Freunde"
+  "message.craftproxy.client.open_friends_button": "Freunde",
+
+  "key.category.craftproxy.keys": "CraftProxy",
+  "key.craftproxy.open_friends": "Freunde öffnen"
 }
