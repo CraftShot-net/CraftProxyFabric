@@ -1,16 +1,23 @@
 package net.craftproxy.mod.client.screens;
 
+import net.craftproxy.mod.client.MCTunnelClient;
 import net.craftproxy.mod.client.managers.FriendManager;
 import net.craftproxy.mod.client.managers.FriendManager.UserDto;
+import net.craftproxy.mod.client.managers.TunnelManager;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.TitleScreen;
+import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.client.multiplayer.resolver.ServerAddress;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.resources.Identifier;
 import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.entity.player.PlayerSkin;
 import org.jspecify.annotations.NonNull;
 import org.lwjgl.glfw.GLFW;
@@ -38,7 +45,7 @@ public class FriendsScreen extends Screen {
     }
 
     // --- State & Navigation ---
-    private enum Tab {FRIENDS, REQUESTS}
+    private enum Tab {FRIENDS, REQUESTS, WORLD_INVITES}
 
     private Tab activeTab = Tab.FRIENDS;
     private int scrollY = 0;
@@ -54,13 +61,18 @@ public class FriendsScreen extends Screen {
     private Button addFriendButton;
     private Button tabFriendsButton;
     private Button tabRequestsButton;
+    private Button tabWorldInvitesButton;
 
     private final List<UserDto> friends = new CopyOnWriteArrayList<>();
     private final List<UserDto> requests = new CopyOnWriteArrayList<>();
+    private final List<FriendManager.WorldInviteDto> worldInvites = new CopyOnWriteArrayList<>();
     private final Map<String, Boolean> onlineStatusByName = new ConcurrentHashMap<>();
     private final Map<String, Long> statusFetchAtMillis = new ConcurrentHashMap<>();
     private final Set<String> inFlightStatusFetches = ConcurrentHashMap.newKeySet();
     private static final long STATUS_REFRESH_INTERVAL_MS = 5000L;
+    
+    private final Map<String, Long> inviteButtonCooldowns = new ConcurrentHashMap<>();
+    private static final long INVITE_COOLDOWN_MS = 2000L;
 
     private FriendsScreen() {
         super(tr("title"));
@@ -68,6 +80,7 @@ public class FriendsScreen extends Screen {
 
     private Consumer<List<UserDto>> friendsListener;
     private Consumer<List<UserDto>> requestsListener;
+    private Consumer<List<FriendManager.WorldInviteDto>> worldInvitesListener;
 
     @Override
     protected void init() {
@@ -76,7 +89,7 @@ public class FriendsScreen extends Screen {
         this.topPos = (this.height - MODAL_HEIGHT) / 2;
 
         int padding = 10;
-        int buttonWidth = (MODAL_WIDTH - (padding * 3)) / 2;
+        int buttonWidth = (MODAL_WIDTH - (padding * 4)) / 3;
 
         FriendManager.getInstance().setScreenOpen(true);
 
@@ -91,9 +104,15 @@ public class FriendsScreen extends Screen {
             this.requests.addAll(fresh);
             updateState();
         });
+        worldInvitesListener = fresh -> this.minecraft.execute(() -> {
+            this.worldInvites.clear();
+            this.worldInvites.addAll(fresh);
+            updateState();
+        });
 
         FriendManager.getInstance().addFriendsListener(friendsListener);
         FriendManager.getInstance().addPendingRequestsListener(requestsListener);
+        FriendManager.getInstance().addWorldInvitesListener(worldInvitesListener);
 
         // Tabs
         this.tabFriendsButton = Button.builder(tr("tab.friends"), _ -> {
@@ -110,10 +129,18 @@ public class FriendsScreen extends Screen {
         }).bounds(leftPos + (padding * 2) + buttonWidth, topPos + 25, buttonWidth, 20).build();
         this.addRenderableWidget(this.tabRequestsButton);
 
+        this.tabWorldInvitesButton = Button.builder(tr("tab.world_invites", worldInvites.size()), _ -> {
+            activeTab = Tab.WORLD_INVITES;
+            scrollY = 0;
+            updateState();
+        }).bounds(leftPos + (padding * 3) + (buttonWidth * 2), topPos + 25, buttonWidth, 20).build();
+        this.addRenderableWidget(this.tabWorldInvitesButton);
+
         // Add Friend Area
         int bottomY = topPos + MODAL_HEIGHT - 30;
         this.addFriendField = new EditBox(this.font, leftPos + padding, bottomY, MODAL_WIDTH - 90, 20, tr("input.player_name"));
         this.addFriendField.setMaxLength(16);
+        this.addFriendField.setHint(tr("input.player_name"));
         this.addRenderableWidget(this.addFriendField);
 
         this.addFriendButton = Button.builder(tr("button.add"), _ -> sendFriendRequest()).bounds(leftPos + MODAL_WIDTH - 75, bottomY, 65, 20).build();
@@ -132,6 +159,9 @@ public class FriendsScreen extends Screen {
         if (requestsListener != null) {
             FriendManager.getInstance().removePendingRequestsListener(requestsListener);
         }
+        if (worldInvitesListener != null) {
+            FriendManager.getInstance().removeWorldInvitesListener(worldInvitesListener);
+        }
         FriendManager.getInstance().setScreenOpen(false);
 
     }
@@ -144,6 +174,8 @@ public class FriendsScreen extends Screen {
         refreshStatusesForCurrentFriends();
         this.requests.clear();
         this.requests.addAll(manager.getCachedPendingRequests());
+        this.worldInvites.clear();
+        this.worldInvites.addAll(manager.getCachedWorldInvites());
         updateState();
 
         manager.getFriends().thenAccept(apiFriends -> this.minecraft.execute(() -> {
@@ -158,13 +190,21 @@ public class FriendsScreen extends Screen {
             this.requests.addAll(apiRequests);
             updateState();
         })).exceptionally(_ -> null);
+
+        manager.getWorldInvites().thenAccept(apiWorldInvites -> this.minecraft.execute(() -> {
+            this.worldInvites.clear();
+            this.worldInvites.addAll(apiWorldInvites);
+            updateState();
+        })).exceptionally(_ -> null);
     }
 
     private void updateState() {
-        if (this.tabFriendsButton != null && this.tabRequestsButton != null) {
+        if (this.tabFriendsButton != null && this.tabRequestsButton != null && this.tabWorldInvitesButton != null) {
             this.tabFriendsButton.active = (activeTab != Tab.FRIENDS);
             this.tabRequestsButton.active = (activeTab != Tab.REQUESTS);
+            this.tabWorldInvitesButton.active = (activeTab != Tab.WORLD_INVITES);
             this.tabRequestsButton.setMessage(tr("tab.requests", requests.size()));
+            this.tabWorldInvitesButton.setMessage(tr("tab.world_invites", worldInvites.size()));
         }
     }
 
@@ -219,19 +259,32 @@ public class FriendsScreen extends Screen {
         graphics.enableScissor(listX, listY, listX + listWidth, listY + listHeight);
 
         int renderY = listY - scrollY;
-        int totalItems = activeTab == Tab.FRIENDS ? friends.size() : requests.size();
+        int totalItems = switch (activeTab) {
+            case FRIENDS -> friends.size();
+            case REQUESTS -> requests.size();
+            case WORLD_INVITES -> worldInvites.size();
+        };
 
-        if (activeTab == Tab.FRIENDS) {
-            for (UserDto friend : friends) {
-                refreshOnlineStatus(friend.name(), false);
-                boolean isOnline = onlineStatusByName.getOrDefault(friend.name(), false);
-                drawListItem(graphics, mouseX, mouseY, listX, renderY, listWidth, friend.name(), isOnline, true);
-                renderY += LIST_ITEM_HEIGHT;
+        switch (activeTab) {
+            case FRIENDS -> {
+                for (UserDto friend : friends) {
+                    refreshOnlineStatus(friend.name(), false);
+                    boolean isOnline = onlineStatusByName.getOrDefault(friend.name(), false);
+                    drawListItem(graphics, mouseX, mouseY, listX, renderY, listWidth, friend.name(), isOnline, true);
+                    renderY += LIST_ITEM_HEIGHT;
+                }
             }
-        } else {
-            for (UserDto req : requests) {
-                drawListItem(graphics, mouseX, mouseY, listX, renderY, listWidth, req.name(), false, false);
-                renderY += LIST_ITEM_HEIGHT;
+            case REQUESTS -> {
+                for (UserDto req : requests) {
+                    drawListItem(graphics, mouseX, mouseY, listX, renderY, listWidth, req.name(), false, false);
+                    renderY += LIST_ITEM_HEIGHT;
+                }
+            }
+            case WORLD_INVITES -> {
+                for (FriendManager.WorldInviteDto invite : worldInvites) {
+                    drawWorldInviteItem(graphics, mouseX, mouseY, listX, renderY, listWidth, invite);
+                    renderY += LIST_ITEM_HEIGHT;
+                }
             }
         }
 
@@ -309,26 +362,69 @@ public class FriendsScreen extends Screen {
 
         if (isFriend) {
             if (isOnline) {
-                drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - (btnWidth * 2) - btnMargin - 5, btnY, btnWidth, btnHeight, tr("button.invite"), true);
+                boolean isDisabled = isInviteOnCooldown(name) || !isInSingleplayerWorld();
+                drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - (btnWidth * 2) - btnMargin - 5, btnY, btnWidth, btnHeight, tr("button.invite"), true, isDisabled);
             }
-            drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - btnWidth - btnMargin, btnY, btnWidth, btnHeight, tr("button.remove"), false);
+            drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - btnWidth - btnMargin, btnY, btnWidth, btnHeight, tr("button.remove"), false, false);
         } else {
-            drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - (btnWidth * 2) - btnMargin - 5, btnY, btnWidth, btnHeight, tr("button.accept"), true);
-            drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - btnWidth - btnMargin, btnY, btnWidth, btnHeight, tr("button.decline"), false);
+            drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - (btnWidth * 2) - btnMargin - 5, btnY, btnWidth, btnHeight, tr("button.accept"), true, false);
+            drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - btnWidth - btnMargin, btnY, btnWidth, btnHeight, tr("button.decline"), false, false);
         }
 
         graphics.horizontalLine(x + 2, x + width - 10, y + FriendsScreen.LIST_ITEM_HEIGHT - 1, 0x20FFFFFF);
     }
 
-    private void drawVanillaStyleButton(GuiGraphicsExtractor graphics, int mouseX, int mouseY, int x, int y, int w, int h, Component text, boolean positiveAction) {
+    private void drawWorldInviteItem(GuiGraphicsExtractor graphics, int mouseX, int mouseY, int x, int y, int width, FriendManager.WorldInviteDto invite) {
+        int listStartY = topPos + 55;
+        int listEndY = topPos + MODAL_HEIGHT - 40;
+
+        if (y + FriendsScreen.LIST_ITEM_HEIGHT < listStartY || y > listEndY) return;
+
+        boolean hovered = mouseX >= x && mouseX <= x + width - 8 && mouseY >= Math.max(y, listStartY) && mouseY <= Math.min(y + FriendsScreen.LIST_ITEM_HEIGHT, listEndY);
+        if (hovered) {
+            graphics.fill(x, y, x + width - 8, y + FriendsScreen.LIST_ITEM_HEIGHT, 0x15FFFFFF);
+        }
+
+        // --- Avatar (host skin) ---
+        Supplier<PlayerSkin> skinSupplier = getSkinAsyncPublic(invite.hostName());
+        Identifier skinTexture = getFixedSkinTexture(skinSupplier);
+
+        graphics.fill(x + 4, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 13, x + 30, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) + 13, 0xFF000000);
+        graphics.blit(RenderPipelines.GUI_TEXTURED, skinTexture, x + 5, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 12, 8.0F, 8.0F, 24, 24, 8, 8, 64, 64);
+        graphics.blit(RenderPipelines.GUI_TEXTURED, skinTexture, x + 5, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 12, 40.0F, 8.0F, 24, 24, 8, 8, 64, 64);
+
+        // Only one action button now (Accept) since invites can simply be ignored
+        int btnWidth = 65;
+        int btnMargin = 12;
+        int reservedButtonSpace = btnWidth + btnMargin + 10;
+        int maxTextWidth = width - 38 - reservedButtonSpace;
+
+        // --- Info ---
+        String displayName = truncateText(invite.worldName(), maxTextWidth);
+        graphics.text(this.font, displayName, x + 38, y + 8, 0xFFFFFFFF);
+
+        String subText = truncateText(tr("world_invite.from", invite.hostName()).getString(), maxTextWidth);
+        graphics.text(this.font, subText, x + 38, y + 21, 0xFFAAAAAA);
+
+        // --- Button ---
+        int btnHeight = 20;
+        int btnY = y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 10;
+        drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - btnWidth - btnMargin, btnY, btnWidth, btnHeight, tr("button.join"), true, false);
+
+        graphics.horizontalLine(x + 2, x + width - 10, y + FriendsScreen.LIST_ITEM_HEIGHT - 1, 0x20FFFFFF);
+    }
+
+    private void drawVanillaStyleButton(GuiGraphicsExtractor graphics, int mouseX, int mouseY, int x, int y, int w, int h, Component text, boolean positiveAction, boolean disabled) {
         int listStartY = topPos + 55;
         int listEndY = topPos + MODAL_HEIGHT - 40;
         boolean withinListBounds = mouseY >= listStartY && mouseY <= listEndY;
-        boolean hovered = withinListBounds && mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h;
+        boolean hovered = !disabled && withinListBounds && mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h;
 
         int baseColor = positiveAction ? 0xFF2B7C2B : 0xFF9E2B2B;
         int hoverColor = positiveAction ? 0xFF3CA83C : 0xFFC63C3C;
-        int bgColor = hovered ? hoverColor : baseColor;
+        int disabledColor = 0xFF555555;
+        
+        int bgColor = disabled ? disabledColor : (hovered ? hoverColor : baseColor);
 
         graphics.fill(x, y, x + w, y + h, 0xFF000000);
         graphics.fill(x + 1, y + 1, x + w - 1, y + h - 1, bgColor);
@@ -337,7 +433,7 @@ public class FriendsScreen extends Screen {
         graphics.fill(x + 1, y + h - 2, x + w - 1, y + h - 1, 0x40000000);
         graphics.fill(x + w - 2, y + 1, x + w - 1, y + h - 1, 0x40000000);
 
-        int textColor = hovered ? 0xFFFFFFAA : 0xFFFFFFFF;
+        int textColor = disabled ? 0xFF888888 : (hovered ? 0xFFFFFFAA : 0xFFFFFFFF);
         graphics.centeredText(this.font, text.getString(), x + (w / 2), y + (h - 8) / 2 + 1, textColor);
     }
 
@@ -363,10 +459,7 @@ public class FriendsScreen extends Screen {
         }
 
         statusFetchAtMillis.put(username, now);
-        FriendManager.getInstance().getIngameOnlineStatus(username)
-                .thenAccept(status -> this.minecraft.execute(() -> onlineStatusByName.put(username, status.is_ingame_online())))
-                .exceptionally(_ -> null)
-                .whenComplete((_, _) -> inFlightStatusFetches.remove(username));
+        FriendManager.getInstance().getIngameOnlineStatus(username).thenAccept(status -> this.minecraft.execute(() -> onlineStatusByName.put(username, status.is_ingame_online()))).exceptionally(_ -> null).whenComplete((_, _) -> inFlightStatusFetches.remove(username));
     }
 
     private static Component tr(String key, Object... args) {
@@ -412,8 +505,8 @@ public class FriendsScreen extends Screen {
                     UserDto friend = friends.get(clickedIndex);
                     boolean isOnline = onlineStatusByName.getOrDefault(friend.name(), false);
                     // Button 1: Invite (if Online)
-                    if (clickedBtn1 && isOnline) {
-                        System.out.println(tr("log.host_invite_sent", friend.name()).getString());
+                    if (clickedBtn1 && isOnline && !isInviteOnCooldown(friend.name()) && isInSingleplayerWorld()) {
+                        handleInviteClick(friend.name());
                         return true;
                     }
                     // Button 2: Remove
@@ -445,11 +538,99 @@ public class FriendsScreen extends Screen {
                         });
                         return true;
                     }
+                } else if (activeTab == Tab.WORLD_INVITES && clickedIndex < worldInvites.size()) {
+                    FriendManager.WorldInviteDto invite = worldInvites.get(clickedIndex);
+                    if (clickedBtn2) {
+                        this.minecraft.gui.setScreen(null);
+                        if (this.minecraft.level != null) {
+                            this.minecraft.level.disconnect(Component.empty());
+                        }
+                        if (MCTunnelClient.getInstance().getTunnelClient().isConnected()) {
+                            MCTunnelClient.getInstance().getTunnelClient().disconnect();
+                        }
+
+                        ServerAddress address = ServerAddress.parseString(invite.tunnel_ip());
+                        ServerData serverData = new ServerData(
+                                invite.worldName(),
+                                invite.tunnel_ip(),
+                                ServerData.Type.OTHER
+                        );
+
+                        ConnectScreen.startConnecting(
+                                new TitleScreen(),
+                                this.minecraft,
+                                address,
+                                serverData,
+                                false,
+                                null
+                        );
+
+                        return true;
+                    }
                 }
             }
         }
         return super.mouseClicked(event, doubleClick);
     }
+
+    private void handleInviteClick(String friendName) {
+        if (this.minecraft.getSingleplayerServer() == null) {
+            return;
+        }
+
+        inviteButtonCooldowns.put(friendName, System.currentTimeMillis());
+        playInviteSound();
+
+        String worldName = this.minecraft.getSingleplayerServer().getWorldData().getLevelName();
+
+        if (!this.minecraft.getSingleplayerServer().isPublished()) {
+            this.minecraft.getSingleplayerServer().publishServer(net.minecraft.server.MinecraftServer.MultiplayerScope.LAN, net.minecraft.world.level.GameType.SURVIVAL, false, 25565);
+        }
+
+
+        if (MCTunnelClient.getInstance().getTunnelClient().isConnected()) {
+            executeApiInvite(friendName, worldName, MCTunnelClient.getInstance().getTunnelClient().getHostname());
+        } else {
+            TunnelManager.host(this.minecraft, MCTunnelClient.getInstance().getTunnelClient(), hostname -> executeApiInvite(friendName, worldName, hostname));
+        }
+    }
+
+    private void playInviteSound() {
+        if (this.minecraft.player != null) {
+            this.minecraft.player.playSound(
+                    SoundEvents.UI_BUTTON_CLICK.value(),
+                    0.5f,
+                    1.2f
+            );
+        }
+    }
+
+    private boolean isInviteOnCooldown(String friendName) {
+        Long cooldownStartTime = inviteButtonCooldowns.get(friendName);
+        if (cooldownStartTime == null) {
+            return false;
+        }
+        return System.currentTimeMillis() - cooldownStartTime < INVITE_COOLDOWN_MS;
+    }
+
+    private boolean isInSingleplayerWorld() {
+        return this.minecraft.getSingleplayerServer() != null;
+    }
+
+    private void executeApiInvite(String friendName, String worldName, String tunnelIp) {
+        FriendManager.getInstance().sendWorldInvite(friendName, worldName, tunnelIp).thenAccept(success -> {
+            if (success) {
+                System.out.println("[CraftProxy] Sent invite to " + friendName + " for world " + worldName + " at " + tunnelIp);
+            } else {
+                System.err.println("[CraftProxy] Error sending  invite to " + friendName + " for world " + worldName + " at " + tunnelIp);
+            }
+        }).exceptionally(ex -> {
+            System.err.println("[CraftProxy] Error sending invite to " + friendName + " for world " + worldName + " at " + tunnelIp);
+            ex.printStackTrace();
+            return null;
+        });
+    }
+
 
     @Override
     public boolean mouseScrolled(final double x, final double y, final double scrollX, final double scrollY) {
@@ -459,7 +640,11 @@ public class FriendsScreen extends Screen {
         int listHeight = MODAL_HEIGHT - 95;
 
         if (x >= listX && x <= listX + listWidth && y >= listY && y <= listY + listHeight) {
-            int totalContentHeight = (activeTab == Tab.FRIENDS ? friends.size() : requests.size()) * LIST_ITEM_HEIGHT;
+            int totalContentHeight = switch (activeTab) {
+                case FRIENDS -> friends.size();
+                case REQUESTS -> requests.size();
+                case WORLD_INVITES -> worldInvites.size();
+            } * LIST_ITEM_HEIGHT;
             int maxScroll = Math.max(0, totalContentHeight - listHeight);
 
             if (maxScroll > 0) {

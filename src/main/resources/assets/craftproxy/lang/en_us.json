@@ -14,6 +14,11 @@
   "screen.craftproxy.friends.button.decline": "Decline",
   "screen.craftproxy.friends.log.request_sent": "Friend request sent to: %s",
   "screen.craftproxy.friends.log.host_invite_sent": "Host invite sent to: %s",
+  "screen.craftproxy.friends.tab.world_invites": "World Invites (%s)",
+  "screen.craftproxy.friends.world_invite.from": "From: %s",
+  "screen.craftproxy.friends.button.join": "Join",
+  "screen.craftproxy.friends.toast.world_invite.title": "World Invite",
+  "screen.craftproxy.friends.toast.world_invite.message": "%s invited you to \"%s\"",
   "message.craftproxy.tunnel.server_closed": "Tunnel of server closed.",
   "message.craftproxy.tunnel.error": "Tunnel error: %s",
   "message.craftproxy.tunnel.reconnecting": "Tunnel disconnected, reconnecting...",
@@ -22,5 +27,6 @@
   "message.craftproxy.client.already_hosting_prefix": "Already hosting at ",
   "message.craftproxy.client.tunnel_active": "✔ Tunnel active!",
   "message.craftproxy.client.share_ip_prefix": "Share this IP with your friends: ",
-  "message.craftproxy.client.click_to_copy": "Click to copy"
+  "message.craftproxy.client.click_to_copy": "Click to copy",
+  "message.craftproxy.client.open_friends_button": "Friends"
 }

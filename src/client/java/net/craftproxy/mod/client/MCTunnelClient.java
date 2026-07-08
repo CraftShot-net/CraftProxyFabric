@@ -2,7 +2,9 @@ package net.craftproxy.mod.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import net.craftproxy.mod.client.dto.AuthResponseDto;
+import net.craftproxy.mod.client.gui.IconButton;
 import net.craftproxy.mod.client.managers.FriendManager;
+import net.craftproxy.mod.client.managers.TunnelManager;
 import net.craftproxy.mod.client.screens.FriendsScreen;
 import net.craftproxy.mod.client.utils.HttpUtils;
 import net.fabricmc.api.ClientModInitializer;
@@ -12,16 +14,17 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
+import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.network.chat.ClickEvent;
+import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.world.level.GameType;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.HashMap;
@@ -31,21 +34,39 @@ import java.util.concurrent.TimeUnit;
 
 public class MCTunnelClient implements ClientModInitializer {
     private static final String TRANSLATION_PREFIX = "message.craftproxy.client.";
-
+    public static MCTunnelClient instance;
     public static TunnelClient tunnelClient;
     public static String apiToken = null;
     private static String lastKnownMcToken = null;
     public static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("craftproxy", "keys"));
     private static final KeyMapping openFriendsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.craftproxy.open_friends", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_I, CATEGORY));
 
+    // Layout for the vertical mod-button column next to the (204px wide) vanilla pause menu.
+    private static final int MOD_BUTTON_MARGIN = 2;
+    private static final int MOD_BUTTON_COLUMN_TOP = 92;
+
     @Override
     public void onInitializeClient() {
         final Minecraft mc = Minecraft.getInstance();
         tunnelClient = new TunnelClient();
+        instance = this;
 
         ClientLifecycleEvents.CLIENT_STARTED.register(_ -> {
             lastKnownMcToken = mc.getUser().getAccessToken();
             authenticate(mc);
+        });
+
+        ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, _) -> {
+            if (screen instanceof PauseScreen) {
+                findButtonByText(screen, Component.translatable("menu.returnToGame").getString())
+                        .ifPresentOrElse(
+                                anchor -> addFriendsIconButton(client, screen, anchor.getX() + anchor.getWidth() + MOD_BUTTON_MARGIN, anchor.getY()),
+                                () -> addFriendsIconButton(client, screen, (scaledWidth / 2) + (204 / 2) + MOD_BUTTON_MARGIN, MOD_BUTTON_COLUMN_TOP)
+                        );
+            } else if (screen instanceof TitleScreen) {
+                // Top-right corner;
+                addFriendsIconButton(client, screen, scaledWidth - 24, 6);
+            }
         });
 
         ClientTickEvents.END_CLIENT_TICK.register(_ -> {
@@ -87,6 +108,7 @@ public class MCTunnelClient implements ClientModInitializer {
         });
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, _) -> dispatcher.register(ClientCommands.literal("host").executes(ctx -> {
 
+
             if (mc.getSingleplayerServer() == null) {
                 ctx.getSource().sendFeedback(tr("singleplayer_required").withStyle(ChatFormatting.RED));
                 return 0;
@@ -97,13 +119,8 @@ public class MCTunnelClient implements ClientModInitializer {
                 return 0;
             }
 
-            mc.getSingleplayerServer().publishServer(MinecraftServer.MultiplayerScope.LAN, GameType.SURVIVAL, false, 25565);
 
-            tunnelClient.connect(hostname -> mc.execute(() -> {
-                if (mc.player != null) {
-                    mc.player.sendSystemMessage(Component.empty().append(tr("tunnel_active").withStyle(ChatFormatting.GREEN, ChatFormatting.BOLD)).append(Component.literal("\n")).append(tr("share_ip_prefix").withStyle(ChatFormatting.GRAY)).append(Component.literal(hostname).withStyle(style -> style.withColor(ChatFormatting.GOLD).withUnderlined(true).withClickEvent(new ClickEvent.CopyToClipboard(hostname)).withHoverEvent(new HoverEvent.ShowText(tr("click_to_copy").withStyle(ChatFormatting.YELLOW))))));
-                }
-            }));
+            TunnelManager.host(mc, tunnelClient, _ -> {});
 
             return 1;
         })));
@@ -114,11 +131,52 @@ public class MCTunnelClient implements ClientModInitializer {
         });
 
         ClientPlayConnectionEvents.DISCONNECT.register((_, _) -> {
-            if (tunnelClient.isConnected()) tunnelClient.disconnect();
+            if (tunnelClient.isConnected()) { tunnelClient.disconnect();
+                FriendManager.getInstance().clearWorldInvites();
+            }
         });
 
-        Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(() -> FriendManager.getInstance().sendHeartbeat(), 0, 30, TimeUnit.SECONDS);
+        Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(() -> {
+            try {
+                if (apiToken != null) {
+                    FriendManager.getInstance().sendHeartbeat();
+                }
+            } catch (Exception ignored) {
+                // ingore to keep thread alive
+            }
+        }, 10, 30, TimeUnit.SECONDS);
 
+    }
+
+    private static final Identifier FRIENDS_ICON = Identifier.fromNamespaceAndPath("craftproxy", "textures/gui/icon_friends.png");
+
+    private static java.util.Optional<net.minecraft.client.gui.components.AbstractWidget> findButtonByText(Screen screen, String text) {
+        return Screens.getWidgets(screen).stream()
+                .filter(widget -> widget instanceof net.minecraft.client.gui.components.Button button && button.getMessage().getString().equals(text))
+                .findFirst();
+    }
+
+    private static void addFriendsIconButton(Minecraft client, Screen screen, int x, int y) {
+        IconButton friendsButton = new IconButton(x, y, 20, FRIENDS_ICON, tr("open_friends_button"), _ -> {
+            if (apiToken != null) {
+                client.gui.setScreen(FriendsScreen.getInstance());
+            }
+        });
+
+        friendsButton.active = apiToken != null;
+        friendsButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(tr("open_friends_button")));
+
+        Screens.getWidgets(screen).add(friendsButton);
+
+        ScreenEvents.afterTick(screen).register(_ -> friendsButton.active = apiToken != null);
+    }
+
+    public static MCTunnelClient getInstance() {
+        return instance;
+    }
+
+    public TunnelClient getTunnelClient() {
+        return tunnelClient;
     }
 
     public static void authenticate(Minecraft mc) {
@@ -155,7 +213,7 @@ public class MCTunnelClient implements ClientModInitializer {
         }).start();
     }
 
-    private static MutableComponent tr(String key, Object... args) {
+    public static MutableComponent tr(String key, Object... args) {
         return Component.translatable(TRANSLATION_PREFIX + key, args);
     }
 }
