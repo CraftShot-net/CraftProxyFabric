@@ -11,8 +11,10 @@ import io.netty.handler.codec.LineBasedFrameDecoder;
 import io.netty.handler.codec.string.StringDecoder;
 import io.netty.handler.codec.string.StringEncoder;
 import io.netty.util.AttributeKey;
-import net.minecraft.network.chat.Component;
-import net.minecraft.client.Minecraft;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.text.MutableText;
+import net.minecraft.text.Text;
+
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -32,6 +34,7 @@ public class TunnelClient {
     private volatile boolean intentionalDisconnect = false;
     private Consumer<String> onReadyCallback;
     private static final String prefix = "§7(§6CraftProxy§7) ";
+
     public void connect(Consumer<String> onReady) {
         this.onReadyCallback = onReady;
         this.intentionalDisconnect = false;
@@ -58,7 +61,7 @@ public class TunnelClient {
         bootstrap.connect(SERVER_HOST, CONTROL_PORT).addListener((ChannelFuture f) -> {
             if (f.isSuccess()) {
                 controlChannel = f.channel();
-                String token = Minecraft.getInstance().getUser().getAccessToken();
+                String token = MinecraftClient.getInstance().getSession().getAccessToken();
                 controlChannel.writeAndFlush("REGISTER " + token + "\n");
                 connected = true;
             } else {
@@ -102,23 +105,21 @@ public class TunnelClient {
                 openBridge(sessionId, playerIp);
             } else if (msg.startsWith("BROADCAST ")) {
                 String text = msg.substring(10);
-                Minecraft mc = Minecraft.getInstance();
-                if (mc.getSingleplayerServer() != null) {
-                    mc.execute(() -> mc.getSingleplayerServer()
-                            .getPlayerList()
-                            .broadcastSystemMessage(
-                                    Component.literal(text), false
-                            ));
+                MinecraftClient mc = MinecraftClient.getInstance();
+                if (mc.getServer() != null) {
+                    mc.execute(() -> mc.getServer()
+                            .getPlayerManager()
+                            .broadcast(Text.literal(text), false));
                 }
 
             } else if (msg.equals("SHUTDOWN")) {
                 intentionalDisconnect = true;
                 ctx.close();
-                Minecraft mc = Minecraft.getInstance();
+                MinecraftClient mc = MinecraftClient.getInstance();
                 mc.execute(() -> {
                     if (mc.player != null) {
-                        mc.player.sendSystemMessage(
-                                Component.literal(prefix + "§c" + tr("server_closed").getString())
+                        mc.player.sendMessage(
+                                Text.literal(prefix + "§c" + tr("server_closed").getString()), false
                         );
                     }
                 });
@@ -128,11 +129,11 @@ public class TunnelClient {
                 intentionalDisconnect = true;
                 connected = false;
                 String errorMsg = msg.substring(6);
-                Minecraft mc = Minecraft.getInstance();
+                MinecraftClient mc = MinecraftClient.getInstance();
                 mc.execute(() -> {
                     if (mc.player != null) {
-                        mc.player.sendSystemMessage(
-                                Component.literal(prefix + "§c" + tr("error", errorMsg).getString())
+                        mc.player.sendMessage(
+                                Text.literal(prefix + "§c" + tr("error", errorMsg).getString()), false
                         );
                     }
                 });
@@ -144,11 +145,11 @@ public class TunnelClient {
             connected = false;
             assignedHostname = null;
             if (!intentionalDisconnect) {
-                Minecraft mc = Minecraft.getInstance();
+                MinecraftClient mc = MinecraftClient.getInstance();
                 mc.execute(() -> {
                     if (mc.player != null) {
-                        mc.player.sendSystemMessage(
-                                Component.literal(prefix + "§c" + tr("reconnecting").getString())
+                        mc.player.sendMessage(
+                                Text.literal(prefix + "§c" + tr("reconnecting").getString()), false
                         );
                     }
                 });
@@ -157,8 +158,8 @@ public class TunnelClient {
         }
     }
 
-    private static Component tr(String key, Object... args) {
-        return Component.translatable(TRANSLATION_PREFIX + key, args);
+    private static MutableText tr(String key, Object... args) {
+        return Text.translatable(TRANSLATION_PREFIX + key, args);
     }
 
     private void openBridge(String sessionId, String playerIp) {

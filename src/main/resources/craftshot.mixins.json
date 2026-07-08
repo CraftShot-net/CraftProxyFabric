@@ -1,7 +1,7 @@
 {
 	"required": true,
 	"package": "net.craftproxy.mod.mixin",
-	"compatibilityLevel": "JAVA_25",
+	"compatibilityLevel": "JAVA_17",
 	"mixins": [
 
 	],

@@ -1,6 +1,5 @@
 package net.craftproxy.mod.client;
 
-import com.mojang.blaze3d.platform.InputConstants;
 import net.craftproxy.mod.client.dto.AuthResponseDto;
 import net.craftproxy.mod.client.gui.IconButton;
 import net.craftproxy.mod.client.managers.FriendManager;
@@ -9,22 +8,26 @@ import net.craftproxy.mod.client.screens.FriendsScreen;
 import net.craftproxy.mod.client.utils.HttpUtils;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
-import net.minecraft.ChatFormatting;
-import net.minecraft.client.KeyMapping;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.screens.PauseScreen;
-import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.gui.screens.TitleScreen;
-import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.MutableComponent;
-import net.minecraft.resources.Identifier;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.GameMenuScreen;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.screen.TitleScreen;
+import net.minecraft.client.gui.tooltip.Tooltip;
+import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.ClickableWidget;
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
+import net.minecraft.text.MutableText;
+import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
+import net.minecraft.util.Identifier;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.HashMap;
@@ -38,8 +41,9 @@ public class MCTunnelClient implements ClientModInitializer {
     public static TunnelClient tunnelClient;
     public static String apiToken = null;
     private static String lastKnownMcToken = null;
-    public static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("craftproxy", "keys"));
-    private static final KeyMapping openFriendsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.craftproxy.open_friends", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_I, CATEGORY));
+    private static final KeyBinding openFriendsKey = KeyBindingHelper.registerKeyBinding(
+            new KeyBinding("key.craftproxy.open_friends", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_I, "key.categories.craftproxy")
+    );
 
     // Layout for the vertical mod-button column next to the (204px wide) vanilla pause menu.
     private static final int MOD_BUTTON_MARGIN = 2;
@@ -47,18 +51,18 @@ public class MCTunnelClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        final Minecraft mc = Minecraft.getInstance();
+        final MinecraftClient mc = MinecraftClient.getInstance();
         tunnelClient = new TunnelClient();
         instance = this;
 
-        ClientLifecycleEvents.CLIENT_STARTED.register(_ -> {
-            lastKnownMcToken = mc.getUser().getAccessToken();
+        ClientLifecycleEvents.CLIENT_STARTED.register(client -> {
+            lastKnownMcToken = mc.getSession().getAccessToken();
             authenticate(mc);
         });
 
-        ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, _) -> {
-            if (screen instanceof PauseScreen) {
-                findButtonByText(screen, Component.translatable("menu.returnToGame").getString())
+        ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
+            if (screen instanceof GameMenuScreen) {
+                findButtonByText(screen, Text.translatable("menu.returnToGame").getString())
                         .ifPresentOrElse(
                                 anchor -> addFriendsIconButton(client, screen, anchor.getX() + anchor.getWidth() + MOD_BUTTON_MARGIN, anchor.getY()),
                                 () -> addFriendsIconButton(client, screen, (scaledWidth / 2) + (204 / 2) + MOD_BUTTON_MARGIN, MOD_BUTTON_COLUMN_TOP)
@@ -69,17 +73,17 @@ public class MCTunnelClient implements ClientModInitializer {
             }
         });
 
-        ClientTickEvents.END_CLIENT_TICK.register(_ -> {
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
 
-            while (openFriendsKey.consumeClick()) {
-                if (mc.gui.screen() == null) {
-                    mc.gui.setScreen(FriendsScreen.getInstance());
+            while (openFriendsKey.wasPressed()) {
+                if (mc.currentScreen == null && apiToken != null && FriendManager.isInitialized()) {
+                    mc.setScreen(FriendsScreen.getInstance());
                 }
             }
 
             //detect account switch
 
-            String currentMcToken = mc.getUser().getAccessToken();
+            String currentMcToken = mc.getSession().getAccessToken();
 
             // If the token changed...
             if (lastKnownMcToken != null && !lastKnownMcToken.equals(currentMcToken)) {
@@ -90,7 +94,7 @@ public class MCTunnelClient implements ClientModInitializer {
                 if (tunnelClient.isConnected()) {
                     tunnelClient.disconnect();
                     if (mc.player != null) {
-                        mc.player.sendSystemMessage(tr("account_changed_disconnected").withStyle(ChatFormatting.RED));
+                        mc.player.sendMessage(tr("account_changed_disconnected").formatted(Formatting.RED), false);
                     }
                 }
 
@@ -106,40 +110,44 @@ public class MCTunnelClient implements ClientModInitializer {
                 }
             }
         });
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, _) -> dispatcher.register(ClientCommands.literal("host").executes(ctx -> {
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(ClientCommandManager.literal("host").executes(ctx -> {
 
-
-            if (mc.getSingleplayerServer() == null) {
-                ctx.getSource().sendFeedback(tr("singleplayer_required").withStyle(ChatFormatting.RED));
+            if (mc.getServer() == null) {
+                ctx.getSource().sendFeedback(tr("singleplayer_required").formatted(Formatting.RED));
                 return 0;
             }
 
             if (tunnelClient.isConnected()) {
-                ctx.getSource().sendFeedback(tr("already_hosting_prefix").withStyle(ChatFormatting.YELLOW).append(Component.literal(tunnelClient.getHostname()).withStyle(ChatFormatting.WHITE)));
+                ctx.getSource().sendFeedback(tr("already_hosting_prefix").formatted(Formatting.YELLOW).append(Text.literal(tunnelClient.getHostname()).formatted(Formatting.WHITE)));
                 return 0;
             }
 
 
-            TunnelManager.host(mc, tunnelClient, _ -> {});
+            TunnelManager.host(mc, tunnelClient, hostname -> {});
 
             return 1;
         })));
 
-        ClientLifecycleEvents.CLIENT_STOPPING.register(_ -> {
-            if (tunnelClient.isConnected()) tunnelClient.disconnect();
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            tunnelClient.disconnect();
             FriendManager.shutdownAndSetOffline();
         });
 
-        ClientPlayConnectionEvents.DISCONNECT.register((_, _) -> {
-            if (tunnelClient.isConnected()) { tunnelClient.disconnect();
-                FriendManager.getInstance().clearWorldInvites();
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            tunnelClient.disconnect();
+            FriendManager manager = FriendManager.getInstanceOrNull();
+            if (manager != null) {
+                manager.clearWorldInvites();
             }
         });
 
         Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(() -> {
             try {
                 if (apiToken != null) {
-                    FriendManager.getInstance().sendHeartbeat();
+                    FriendManager manager = FriendManager.getInstanceOrNull();
+                    if (manager != null) {
+                        manager.sendHeartbeat();
+                    }
                 }
             } catch (Exception ignored) {
                 // ingore to keep thread alive
@@ -148,27 +156,27 @@ public class MCTunnelClient implements ClientModInitializer {
 
     }
 
-    private static final Identifier FRIENDS_ICON = Identifier.fromNamespaceAndPath("craftproxy", "textures/gui/icon_friends.png");
+    private static final Identifier FRIENDS_ICON = new Identifier("craftproxy", "textures/gui/icon_friends.png");
 
-    private static java.util.Optional<net.minecraft.client.gui.components.AbstractWidget> findButtonByText(Screen screen, String text) {
-        return Screens.getWidgets(screen).stream()
-                .filter(widget -> widget instanceof net.minecraft.client.gui.components.Button button && button.getMessage().getString().equals(text))
+    private static java.util.Optional<ClickableWidget> findButtonByText(Screen screen, String text) {
+        return Screens.getButtons(screen).stream()
+                .filter(widget -> widget instanceof ButtonWidget button && button.getMessage().getString().equals(text))
                 .findFirst();
     }
 
-    private static void addFriendsIconButton(Minecraft client, Screen screen, int x, int y) {
-        IconButton friendsButton = new IconButton(x, y, 20, FRIENDS_ICON, tr("open_friends_button"), _ -> {
-            if (apiToken != null) {
-                client.gui.setScreen(FriendsScreen.getInstance());
+    private static void addFriendsIconButton(MinecraftClient client, Screen screen, int x, int y) {
+        IconButton friendsButton = new IconButton(x, y, 20, FRIENDS_ICON, tr("open_friends_button"), button -> {
+            if (apiToken != null && FriendManager.isInitialized()) {
+                client.setScreen(FriendsScreen.getInstance());
             }
         });
 
-        friendsButton.active = apiToken != null;
-        friendsButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(tr("open_friends_button")));
+        friendsButton.active = apiToken != null && FriendManager.isInitialized();
+        friendsButton.setTooltip(Tooltip.of(tr("open_friends_button")));
 
-        Screens.getWidgets(screen).add(friendsButton);
+        Screens.getButtons(screen).add(friendsButton);
 
-        ScreenEvents.afterTick(screen).register(_ -> friendsButton.active = apiToken != null);
+        ScreenEvents.afterTick(screen).register(s -> friendsButton.active = apiToken != null && FriendManager.isInitialized());
     }
 
     public static MCTunnelClient getInstance() {
@@ -179,10 +187,10 @@ public class MCTunnelClient implements ClientModInitializer {
         return tunnelClient;
     }
 
-    public static void authenticate(Minecraft mc) {
+    public static void authenticate(MinecraftClient mc) {
         new Thread(() -> {
             try {
-                String mcToken = mc.getUser().getAccessToken();
+                String mcToken = mc.getSession().getAccessToken();
 
                 HttpUtils api = new HttpUtils("https://backend.craftproxy.net/");
                 Map<String, String> body = new HashMap<>();
@@ -213,7 +221,7 @@ public class MCTunnelClient implements ClientModInitializer {
         }).start();
     }
 
-    public static MutableComponent tr(String key, Object... args) {
-        return Component.translatable(TRANSLATION_PREFIX + key, args);
+    public static MutableText tr(String key, Object... args) {
+        return Text.translatable(TRANSLATION_PREFIX + key, args);
     }
 }

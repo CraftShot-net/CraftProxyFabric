@@ -4,22 +4,23 @@ import net.craftproxy.mod.client.MCTunnelClient;
 import net.craftproxy.mod.client.managers.FriendManager;
 import net.craftproxy.mod.client.managers.FriendManager.UserDto;
 import net.craftproxy.mod.client.managers.TunnelManager;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.screens.ConnectScreen;
-import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.gui.screens.TitleScreen;
-import net.minecraft.client.multiplayer.ServerData;
-import net.minecraft.client.multiplayer.resolver.ServerAddress;
-import net.minecraft.network.chat.Component;
-import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.resources.Identifier;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.sounds.SoundEvents;
-import net.minecraft.world.entity.player.PlayerSkin;
-import org.jspecify.annotations.NonNull;
+import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.PlayerSkinDrawer;
+import net.minecraft.client.gui.screen.ConnectScreen;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.screen.TitleScreen;
+import net.minecraft.client.sound.PositionedSoundInstance;
+import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.client.network.ServerAddress;
+import net.minecraft.client.network.ServerInfo;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.sound.SoundEvents;
+import net.minecraft.text.MutableText;
+import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
+import net.minecraft.util.math.MathHelper;
+import net.minecraft.world.GameMode;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
@@ -57,11 +58,11 @@ public class FriendsScreen extends Screen {
     private int leftPos;
     private int topPos;
 
-    private EditBox addFriendField;
-    private Button addFriendButton;
-    private Button tabFriendsButton;
-    private Button tabRequestsButton;
-    private Button tabWorldInvitesButton;
+    private TextFieldWidget addFriendField;
+    private ButtonWidget addFriendButton;
+    private ButtonWidget tabFriendsButton;
+    private ButtonWidget tabRequestsButton;
+    private ButtonWidget tabWorldInvitesButton;
 
     private final List<UserDto> friends = new CopyOnWriteArrayList<>();
     private final List<UserDto> requests = new CopyOnWriteArrayList<>();
@@ -70,11 +71,11 @@ public class FriendsScreen extends Screen {
     private final Map<String, Long> statusFetchAtMillis = new ConcurrentHashMap<>();
     private final Set<String> inFlightStatusFetches = ConcurrentHashMap.newKeySet();
     private static final long STATUS_REFRESH_INTERVAL_MS = 5000L;
-    
+
     private final Map<String, Long> inviteButtonCooldowns = new ConcurrentHashMap<>();
     private static final long INVITE_COOLDOWN_MS = 2000L;
 
-    private Component addFriendStatusMessage;
+    private Text addFriendStatusMessage;
     private int addFriendStatusColor;
     private long addFriendStatusExpiresAtMillis;
     private static final long ADD_FRIEND_STATUS_DURATION_MS = 4000L;
@@ -96,60 +97,63 @@ public class FriendsScreen extends Screen {
         int padding = 10;
         int buttonWidth = (MODAL_WIDTH - (padding * 4)) / 3;
 
-        FriendManager.getInstance().setScreenOpen(true);
+        FriendManager manager = getFriendManagerOrClose();
+        if (manager == null) {
+            return;
+        }
+        manager.setScreenOpen(true);
 
-        friendsListener = fresh -> this.minecraft.execute(() -> {
+        friendsListener = fresh -> this.client.execute(() -> {
             this.friends.clear();
             this.friends.addAll(fresh);
             refreshStatusesForCurrentFriends();
             updateState();
         });
-        requestsListener = fresh -> this.minecraft.execute(() -> {
+        requestsListener = fresh -> this.client.execute(() -> {
             this.requests.clear();
             this.requests.addAll(fresh);
             updateState();
         });
-        worldInvitesListener = fresh -> this.minecraft.execute(() -> {
+        worldInvitesListener = fresh -> this.client.execute(() -> {
             this.worldInvites.clear();
             this.worldInvites.addAll(fresh);
             updateState();
         });
 
-        FriendManager.getInstance().addFriendsListener(friendsListener);
-        FriendManager.getInstance().addPendingRequestsListener(requestsListener);
-        FriendManager.getInstance().addWorldInvitesListener(worldInvitesListener);
+        manager.addFriendsListener(friendsListener);
+        manager.addPendingRequestsListener(requestsListener);
+        manager.addWorldInvitesListener(worldInvitesListener);
 
         // Tabs
-        this.tabFriendsButton = Button.builder(tr("tab.friends"), _ -> {
+        this.tabFriendsButton = ButtonWidget.builder(tr("tab.friends"), button -> {
             activeTab = Tab.FRIENDS;
             scrollY = 0;
             updateState();
-        }).bounds(leftPos + padding, topPos + 25, buttonWidth, 20).build();
-        this.addRenderableWidget(this.tabFriendsButton);
+        }).dimensions(leftPos + padding, topPos + 25, buttonWidth, 20).build();
+        this.addDrawableChild(this.tabFriendsButton);
 
-        this.tabRequestsButton = Button.builder(tr("tab.requests", requests.size()), _ -> {
+        this.tabRequestsButton = ButtonWidget.builder(tr("tab.requests", requests.size()), button -> {
             activeTab = Tab.REQUESTS;
             scrollY = 0;
             updateState();
-        }).bounds(leftPos + (padding * 2) + buttonWidth, topPos + 25, buttonWidth, 20).build();
-        this.addRenderableWidget(this.tabRequestsButton);
+        }).dimensions(leftPos + (padding * 2) + buttonWidth, topPos + 25, buttonWidth, 20).build();
+        this.addDrawableChild(this.tabRequestsButton);
 
-        this.tabWorldInvitesButton = Button.builder(tr("tab.world_invites", worldInvites.size()), _ -> {
+        this.tabWorldInvitesButton = ButtonWidget.builder(tr("tab.world_invites", worldInvites.size()), button -> {
             activeTab = Tab.WORLD_INVITES;
             scrollY = 0;
             updateState();
-        }).bounds(leftPos + (padding * 3) + (buttonWidth * 2), topPos + 25, buttonWidth, 20).build();
-        this.addRenderableWidget(this.tabWorldInvitesButton);
+        }).dimensions(leftPos + (padding * 3) + (buttonWidth * 2), topPos + 25, buttonWidth, 20).build();
+        this.addDrawableChild(this.tabWorldInvitesButton);
 
         // Add Friend Area
         int bottomY = topPos + MODAL_HEIGHT - 30;
-        this.addFriendField = new EditBox(this.font, leftPos + padding, bottomY, MODAL_WIDTH - 90, 20, tr("input.player_name"));
+        this.addFriendField = new TextFieldWidget(this.textRenderer, leftPos + padding, bottomY, MODAL_WIDTH - 90, 20, tr("input.player_name"));
         this.addFriendField.setMaxLength(16);
-        this.addFriendField.setHint(tr("input.player_name"));
-        this.addRenderableWidget(this.addFriendField);
+        this.addDrawableChild(this.addFriendField);
 
-        this.addFriendButton = Button.builder(tr("button.add"), _ -> sendFriendRequest()).bounds(leftPos + MODAL_WIDTH - 75, bottomY, 65, 20).build();
-        this.addRenderableWidget(this.addFriendButton);
+        this.addFriendButton = ButtonWidget.builder(tr("button.add"), button -> sendFriendRequest()).dimensions(leftPos + MODAL_WIDTH - 75, bottomY, 65, 20).build();
+        this.addDrawableChild(this.addFriendButton);
 
         refreshData();
         updateState();
@@ -158,21 +162,28 @@ public class FriendsScreen extends Screen {
     @Override
     public void removed() {
         super.removed();
+        FriendManager manager = FriendManager.getInstanceOrNull();
+        if (manager == null) {
+            return;
+        }
         if (friendsListener != null) {
-            FriendManager.getInstance().removeFriendsListener(friendsListener);
+            manager.removeFriendsListener(friendsListener);
         }
         if (requestsListener != null) {
-            FriendManager.getInstance().removePendingRequestsListener(requestsListener);
+            manager.removePendingRequestsListener(requestsListener);
         }
         if (worldInvitesListener != null) {
-            FriendManager.getInstance().removeWorldInvitesListener(worldInvitesListener);
+            manager.removeWorldInvitesListener(worldInvitesListener);
         }
-        FriendManager.getInstance().setScreenOpen(false);
+        manager.setScreenOpen(false);
 
     }
 
     private void refreshData() {
-        FriendManager manager = FriendManager.getInstance();
+        FriendManager manager = getFriendManagerOrClose();
+        if (manager == null) {
+            return;
+        }
 
         this.friends.clear();
         this.friends.addAll(manager.getCachedFriends());
@@ -183,24 +194,24 @@ public class FriendsScreen extends Screen {
         this.worldInvites.addAll(manager.getCachedWorldInvites());
         updateState();
 
-        manager.getFriends().thenAccept(apiFriends -> this.minecraft.execute(() -> {
+        manager.getFriends().thenAccept(apiFriends -> this.client.execute(() -> {
             this.friends.clear();
             this.friends.addAll(apiFriends);
             refreshStatusesForCurrentFriends();
             updateState();
-        })).exceptionally(_ -> null);
+        })).exceptionally(ex -> null);
 
-        manager.getPendingRequests().thenAccept(apiRequests -> this.minecraft.execute(() -> {
+        manager.getPendingRequests().thenAccept(apiRequests -> this.client.execute(() -> {
             this.requests.clear();
             this.requests.addAll(apiRequests);
             updateState();
-        })).exceptionally(_ -> null);
+        })).exceptionally(ex -> null);
 
-        manager.getWorldInvites().thenAccept(apiWorldInvites -> this.minecraft.execute(() -> {
+        manager.getWorldInvites().thenAccept(apiWorldInvites -> this.client.execute(() -> {
             this.worldInvites.clear();
             this.worldInvites.addAll(apiWorldInvites);
             updateState();
-        })).exceptionally(_ -> null);
+        })).exceptionally(ex -> null);
     }
 
     private void updateState() {
@@ -215,20 +226,25 @@ public class FriendsScreen extends Screen {
 
     private void sendFriendRequest() {
         if (this.addFriendField != null) {
-            String name = this.addFriendField.getValue().trim();
+            String name = this.addFriendField.getText().trim();
             if (!name.isEmpty()) {
                 this.addFriendButton.active = false;
 
-                FriendManager.getInstance().sendRequestByName(name).thenAccept(success -> this.minecraft.execute(() -> {
+                FriendManager manager = getFriendManagerOrClose();
+                if (manager == null) {
+                    this.addFriendButton.active = true;
+                    return;
+                }
+                manager.sendRequestByName(name).thenAccept(success -> this.client.execute(() -> {
                     this.addFriendButton.active = true;
                     if (success) {
                         setAddFriendStatus(tr("log.request_sent", name), 0xFF55FF55);
-                        this.addFriendField.setValue("");
+                        this.addFriendField.setText("");
                     } else {
                         setAddFriendStatus(tr("error.request_failed", name), 0xFFFF5555);
                     }
-                })).exceptionally(_ -> {
-                    this.minecraft.execute(() -> {
+                })).exceptionally(ex -> {
+                    this.client.execute(() -> {
                         this.addFriendButton.active = true;
                         setAddFriendStatus(tr("error.request_failed", name), 0xFFFF5555);
                     });
@@ -238,31 +254,46 @@ public class FriendsScreen extends Screen {
         }
     }
 
-    private void setAddFriendStatus(Component message, int color) {
+    private void setAddFriendStatus(Text message, int color) {
         this.addFriendStatusMessage = message;
         this.addFriendStatusColor = color;
         this.addFriendStatusExpiresAtMillis = System.currentTimeMillis() + ADD_FRIEND_STATUS_DURATION_MS;
     }
 
     @Override
-    public void extractRenderState(final @NonNull GuiGraphicsExtractor graphics, final int mouseX, final int mouseY, final float delta) {
-        graphics.fill(0, 0, this.width, this.height, 0xB0000000);
+    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+        context.fill(0, 0, this.width, this.height, 0xB0000000);
 
         // Modal Background
-        graphics.fill(leftPos - 1, topPos - 1, leftPos + MODAL_WIDTH + 1, topPos + MODAL_HEIGHT + 1, 0xFF000000);
-        graphics.fill(leftPos, topPos, leftPos + MODAL_WIDTH, topPos + MODAL_HEIGHT, 0xFF313233);
-        graphics.fill(leftPos, topPos, leftPos + MODAL_WIDTH, topPos + 1, 0xFF555555);
-        graphics.fill(leftPos, topPos, leftPos + 1, topPos + MODAL_HEIGHT, 0xFF555555);
+        context.fill(leftPos - 1, topPos - 1, leftPos + MODAL_WIDTH + 1, topPos + MODAL_HEIGHT + 1, 0xFF000000);
+        context.fill(leftPos, topPos, leftPos + MODAL_WIDTH, topPos + MODAL_HEIGHT, 0xFF313233);
+        context.fill(leftPos, topPos, leftPos + MODAL_WIDTH, topPos + 1, 0xFF555555);
+        context.fill(leftPos, topPos, leftPos + 1, topPos + MODAL_HEIGHT, 0xFF555555);
 
         // Title
-        graphics.centeredText(this.font, tr("header").getString(), leftPos + (MODAL_WIDTH / 2), topPos + 8, 0xFFFFAA00);
+        context.drawCenteredTextWithShadow(this.textRenderer, tr("header").getString(), leftPos + (MODAL_WIDTH / 2), topPos + 8, 0xFFFFAA00);
 
-        super.extractRenderState(graphics, mouseX, mouseY, delta);
-        drawList(graphics, mouseX, mouseY);
-        drawAddFriendStatus(graphics);
+        super.render(context, mouseX, mouseY, delta);
+        drawAddFriendPlaceholder(context);
+        drawList(context, mouseX, mouseY);
+        drawAddFriendStatus(context);
     }
 
-    private void drawAddFriendStatus(GuiGraphicsExtractor graphics) {
+    private void drawAddFriendPlaceholder(DrawContext context) {
+        if (this.addFriendField == null || !this.addFriendField.getText().isEmpty()) {
+            return;
+        }
+        context.drawText(
+                this.textRenderer,
+                tr("input.player_name").getString(),
+                this.addFriendField.getX() + 4,
+                this.addFriendField.getY() + 6,
+                0xFF777777,
+                false
+        );
+    }
+
+    private void drawAddFriendStatus(DrawContext context) {
         if (addFriendStatusMessage == null) {
             return;
         }
@@ -271,19 +302,19 @@ public class FriendsScreen extends Screen {
             return;
         }
         String text = truncateText(addFriendStatusMessage.getString(), MODAL_WIDTH - 20);
-        graphics.centeredText(this.font, text, leftPos + (MODAL_WIDTH / 2), topPos + MODAL_HEIGHT - 39, addFriendStatusColor);
+        context.drawCenteredTextWithShadow(this.textRenderer, text, leftPos + (MODAL_WIDTH / 2), topPos + MODAL_HEIGHT - 39, addFriendStatusColor);
     }
 
-    private void drawList(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+    private void drawList(DrawContext context, int mouseX, int mouseY) {
         int listX = leftPos + 10;
         int listY = topPos + 55;
         int listWidth = MODAL_WIDTH - 20;
         int listHeight = MODAL_HEIGHT - 95;
 
-        graphics.fill(listX - 1, listY - 1, listX + listWidth + 1, listY + listHeight + 1, 0xFF000000);
-        graphics.fill(listX, listY, listX + listWidth, listY + listHeight, 0xFF1A1A1A);
+        context.fill(listX - 1, listY - 1, listX + listWidth + 1, listY + listHeight + 1, 0xFF000000);
+        context.fill(listX, listY, listX + listWidth, listY + listHeight, 0xFF1A1A1A);
 
-        graphics.enableScissor(listX, listY, listX + listWidth, listY + listHeight);
+        context.enableScissor(listX, listY, listX + listWidth, listY + listHeight);
 
         int renderY = listY - scrollY;
         int totalItems = switch (activeTab) {
@@ -297,53 +328,53 @@ public class FriendsScreen extends Screen {
                 for (UserDto friend : friends) {
                     refreshOnlineStatus(friend.name(), false);
                     boolean isOnline = onlineStatusByName.getOrDefault(friend.name(), false);
-                    drawListItem(graphics, mouseX, mouseY, listX, renderY, listWidth, friend.name(), isOnline, true);
+                    drawListItem(context, mouseX, mouseY, listX, renderY, listWidth, friend.name(), isOnline, true);
                     renderY += LIST_ITEM_HEIGHT;
                 }
             }
             case REQUESTS -> {
                 for (UserDto req : requests) {
-                    drawListItem(graphics, mouseX, mouseY, listX, renderY, listWidth, req.name(), false, false);
+                    drawListItem(context, mouseX, mouseY, listX, renderY, listWidth, req.name(), false, false);
                     renderY += LIST_ITEM_HEIGHT;
                 }
             }
             case WORLD_INVITES -> {
                 for (FriendManager.WorldInviteDto invite : worldInvites) {
-                    drawWorldInviteItem(graphics, mouseX, mouseY, listX, renderY, listWidth, invite);
+                    drawWorldInviteItem(context, mouseX, mouseY, listX, renderY, listWidth, invite);
                     renderY += LIST_ITEM_HEIGHT;
                 }
             }
         }
 
-        graphics.disableScissor();
-        drawScrollbar(graphics, listX, listY, listWidth, listHeight, totalItems);
+        context.disableScissor();
+        drawScrollbar(context, listX, listY, listWidth, listHeight, totalItems);
     }
 
-    private void drawScrollbar(GuiGraphicsExtractor graphics, int x, int y, int width, int height, int totalItems) {
+    private void drawScrollbar(DrawContext context, int x, int y, int width, int height, int totalItems) {
         int maxScroll = Math.max(0, (totalItems * LIST_ITEM_HEIGHT) - height);
         if (maxScroll > 0) {
             int scrollbarX = x + width - 6;
             int thumbHeight = Math.max(20, (int) ((height / (float) (totalItems * LIST_ITEM_HEIGHT)) * height));
             int thumbY = y + (int) ((scrollY / (float) maxScroll) * (height - thumbHeight));
 
-            graphics.fill(scrollbarX, y, scrollbarX + 5, y + height, 0x80000000);
-            graphics.fill(scrollbarX, thumbY, scrollbarX + 5, thumbY + thumbHeight, 0xFF888888);
-            graphics.fill(scrollbarX, thumbY, scrollbarX + 4, thumbY + thumbHeight - 1, 0xFFCCCCCC);
+            context.fill(scrollbarX, y, scrollbarX + 5, y + height, 0x80000000);
+            context.fill(scrollbarX, thumbY, scrollbarX + 5, thumbY + thumbHeight, 0xFF888888);
+            context.fill(scrollbarX, thumbY, scrollbarX + 4, thumbY + thumbHeight - 1, 0xFFCCCCCC);
         }
     }
 
     private String truncateText(String text, int maxWidth) {
-        if (this.font.width(text) <= maxWidth) {
+        if (this.textRenderer.getWidth(text) <= maxWidth) {
             return text;
         }
         String truncated = text;
-        while (this.font.width(truncated + "...") > maxWidth && !truncated.isEmpty()) {
+        while (this.textRenderer.getWidth(truncated + "...") > maxWidth && !truncated.isEmpty()) {
             truncated = truncated.substring(0, truncated.length() - 1);
         }
         return truncated + "...";
     }
 
-    private void drawListItem(GuiGraphicsExtractor graphics, int mouseX, int mouseY, int x, int y, int width, String name, boolean isOnline, boolean isFriend) {
+    private void drawListItem(DrawContext context, int mouseX, int mouseY, int x, int y, int width, String name, boolean isOnline, boolean isFriend) {
         int listStartY = topPos + 55;
         int listEndY = topPos + MODAL_HEIGHT - 40;
 
@@ -351,16 +382,17 @@ public class FriendsScreen extends Screen {
 
         boolean hovered = mouseX >= x && mouseX <= x + width - 8 && mouseY >= Math.max(y, listStartY) && mouseY <= Math.min(y + FriendsScreen.LIST_ITEM_HEIGHT, listEndY);
         if (hovered) {
-            graphics.fill(x, y, x + width - 8, y + FriendsScreen.LIST_ITEM_HEIGHT, 0x15FFFFFF);
+            context.fill(x, y, x + width - 8, y + FriendsScreen.LIST_ITEM_HEIGHT, 0x15FFFFFF);
         }
 
         // --- Avatar ---
-        Supplier<PlayerSkin> skinSupplier = getSkinAsyncPublic(name);
-        Identifier skinTexture = getFixedSkinTexture(skinSupplier);
+        // NOTE: `PlayerSkin` is a newer-version class - your SkinManager helper will need its own
+        // porting for 1.20.1 (e.g. returning a plain Identifier or a SkinTextures-based wrapper).
+        // Adjust this block once SkinManager is ported.
+        Identifier skinTexture = getFixedSkinTexture(getSkinAsyncPublic(name));
 
-        graphics.fill(x + 4, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 13, x + 30, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) + 13, 0xFF000000);
-        graphics.blit(RenderPipelines.GUI_TEXTURED, skinTexture, x + 5, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 12, 8.0F, 8.0F, 24, 24, 8, 8, 64, 64);
-        graphics.blit(RenderPipelines.GUI_TEXTURED, skinTexture, x + 5, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 12, 40.0F, 8.0F, 24, 24, 8, 8, 64, 64);
+        context.fill(x + 4, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 13, x + 30, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) + 13, 0xFF000000);
+        PlayerSkinDrawer.draw(context, skinTexture, x + 5, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 12, 24);
 
         int btnWidth = 65;
         int btnMargin = 12;
@@ -369,18 +401,18 @@ public class FriendsScreen extends Screen {
 
         // --- Info ---
         String displayName = truncateText(name, maxTextWidth);
-        graphics.text(this.font, displayName, x + 38, y + 8, 0xFFFFFFFF);
+        context.drawText(this.textRenderer, displayName, x + 38, y + 8, 0xFFFFFFFF, false);
 
         if (isFriend) {
             int statusColor = isOnline ? 0xFF55FF55 : 0xFFFF5555;
             String statusText = isOnline ? tr("status.online").getString() : tr("status.offline").getString();
 
-            graphics.fill(x + 38, y + 22, x + 44, y + 28, 0xFF000000);
-            graphics.fill(x + 39, y + 23, x + 43, y + 27, statusColor);
-            graphics.text(this.font, statusText, x + 48, y + 21, 0xFFAAAAAA);
+            context.fill(x + 38, y + 22, x + 44, y + 28, 0xFF000000);
+            context.fill(x + 39, y + 23, x + 43, y + 27, statusColor);
+            context.drawText(this.textRenderer, statusText, x + 48, y + 21, 0xFFAAAAAA, false);
         } else {
             String subText = truncateText(tr("request.incoming").getString(), maxTextWidth);
-            graphics.text(this.font, subText, x + 38, y + 21, 0xFFAAAAAA);
+            context.drawText(this.textRenderer, subText, x + 38, y + 21, 0xFFAAAAAA, false);
         }
 
         // --- Buttons ---
@@ -390,18 +422,18 @@ public class FriendsScreen extends Screen {
         if (isFriend) {
             if (isOnline) {
                 boolean isDisabled = isInviteOnCooldown(name) || !isInSingleplayerWorld();
-                drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - (btnWidth * 2) - btnMargin - 5, btnY, btnWidth, btnHeight, tr("button.invite"), true, isDisabled);
+                drawVanillaStyleButton(context, mouseX, mouseY, x + width - (btnWidth * 2) - btnMargin - 5, btnY, btnWidth, btnHeight, tr("button.invite"), true, isDisabled);
             }
-            drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - btnWidth - btnMargin, btnY, btnWidth, btnHeight, tr("button.remove"), false, false);
+            drawVanillaStyleButton(context, mouseX, mouseY, x + width - btnWidth - btnMargin, btnY, btnWidth, btnHeight, tr("button.remove"), false, false);
         } else {
-            drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - (btnWidth * 2) - btnMargin - 5, btnY, btnWidth, btnHeight, tr("button.accept"), true, false);
-            drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - btnWidth - btnMargin, btnY, btnWidth, btnHeight, tr("button.decline"), false, false);
+            drawVanillaStyleButton(context, mouseX, mouseY, x + width - (btnWidth * 2) - btnMargin - 5, btnY, btnWidth, btnHeight, tr("button.accept"), true, false);
+            drawVanillaStyleButton(context, mouseX, mouseY, x + width - btnWidth - btnMargin, btnY, btnWidth, btnHeight, tr("button.decline"), false, false);
         }
 
-        graphics.horizontalLine(x + 2, x + width - 10, y + FriendsScreen.LIST_ITEM_HEIGHT - 1, 0x20FFFFFF);
+        context.drawHorizontalLine(x + 2, x + width - 10, y + FriendsScreen.LIST_ITEM_HEIGHT - 1, 0x20FFFFFF);
     }
 
-    private void drawWorldInviteItem(GuiGraphicsExtractor graphics, int mouseX, int mouseY, int x, int y, int width, FriendManager.WorldInviteDto invite) {
+    private void drawWorldInviteItem(DrawContext context, int mouseX, int mouseY, int x, int y, int width, FriendManager.WorldInviteDto invite) {
         int listStartY = topPos + 55;
         int listEndY = topPos + MODAL_HEIGHT - 40;
 
@@ -409,16 +441,14 @@ public class FriendsScreen extends Screen {
 
         boolean hovered = mouseX >= x && mouseX <= x + width - 8 && mouseY >= Math.max(y, listStartY) && mouseY <= Math.min(y + FriendsScreen.LIST_ITEM_HEIGHT, listEndY);
         if (hovered) {
-            graphics.fill(x, y, x + width - 8, y + FriendsScreen.LIST_ITEM_HEIGHT, 0x15FFFFFF);
+            context.fill(x, y, x + width - 8, y + FriendsScreen.LIST_ITEM_HEIGHT, 0x15FFFFFF);
         }
 
         // --- Avatar (host skin) ---
-        Supplier<PlayerSkin> skinSupplier = getSkinAsyncPublic(invite.hostName());
-        Identifier skinTexture = getFixedSkinTexture(skinSupplier);
+        Identifier skinTexture = getFixedSkinTexture(getSkinAsyncPublic(invite.hostName()));
 
-        graphics.fill(x + 4, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 13, x + 30, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) + 13, 0xFF000000);
-        graphics.blit(RenderPipelines.GUI_TEXTURED, skinTexture, x + 5, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 12, 8.0F, 8.0F, 24, 24, 8, 8, 64, 64);
-        graphics.blit(RenderPipelines.GUI_TEXTURED, skinTexture, x + 5, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 12, 40.0F, 8.0F, 24, 24, 8, 8, 64, 64);
+        context.fill(x + 4, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 13, x + 30, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) + 13, 0xFF000000);
+        PlayerSkinDrawer.draw(context, skinTexture, x + 5, y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 12, 24);
 
         // Only one action button now (Accept) since invites can simply be ignored
         int btnWidth = 65;
@@ -428,20 +458,20 @@ public class FriendsScreen extends Screen {
 
         // --- Info ---
         String displayName = truncateText(invite.worldName(), maxTextWidth);
-        graphics.text(this.font, displayName, x + 38, y + 8, 0xFFFFFFFF);
+        context.drawText(this.textRenderer, displayName, x + 38, y + 8, 0xFFFFFFFF, false);
 
         String subText = truncateText(tr("world_invite.from", invite.hostName()).getString(), maxTextWidth);
-        graphics.text(this.font, subText, x + 38, y + 21, 0xFFAAAAAA);
+        context.drawText(this.textRenderer, subText, x + 38, y + 21, 0xFFAAAAAA, false);
 
         // --- Button ---
         int btnHeight = 20;
         int btnY = y + (FriendsScreen.LIST_ITEM_HEIGHT / 2) - 10;
-        drawVanillaStyleButton(graphics, mouseX, mouseY, x + width - btnWidth - btnMargin, btnY, btnWidth, btnHeight, tr("button.join"), true, false);
+        drawVanillaStyleButton(context, mouseX, mouseY, x + width - btnWidth - btnMargin, btnY, btnWidth, btnHeight, tr("button.join"), true, false);
 
-        graphics.horizontalLine(x + 2, x + width - 10, y + FriendsScreen.LIST_ITEM_HEIGHT - 1, 0x20FFFFFF);
+        context.drawHorizontalLine(x + 2, x + width - 10, y + FriendsScreen.LIST_ITEM_HEIGHT - 1, 0x20FFFFFF);
     }
 
-    private void drawVanillaStyleButton(GuiGraphicsExtractor graphics, int mouseX, int mouseY, int x, int y, int w, int h, Component text, boolean positiveAction, boolean disabled) {
+    private void drawVanillaStyleButton(DrawContext context, int mouseX, int mouseY, int x, int y, int w, int h, Text text, boolean positiveAction, boolean disabled) {
         int listStartY = topPos + 55;
         int listEndY = topPos + MODAL_HEIGHT - 40;
         boolean withinListBounds = mouseY >= listStartY && mouseY <= listEndY;
@@ -450,18 +480,18 @@ public class FriendsScreen extends Screen {
         int baseColor = positiveAction ? 0xFF2B7C2B : 0xFF9E2B2B;
         int hoverColor = positiveAction ? 0xFF3CA83C : 0xFFC63C3C;
         int disabledColor = 0xFF555555;
-        
+
         int bgColor = disabled ? disabledColor : (hovered ? hoverColor : baseColor);
 
-        graphics.fill(x, y, x + w, y + h, 0xFF000000);
-        graphics.fill(x + 1, y + 1, x + w - 1, y + h - 1, bgColor);
-        graphics.fill(x + 1, y + 1, x + w - 1, y + 2, 0x40FFFFFF);
-        graphics.fill(x + 1, y + 1, x + 2, y + h - 1, 0x40FFFFFF);
-        graphics.fill(x + 1, y + h - 2, x + w - 1, y + h - 1, 0x40000000);
-        graphics.fill(x + w - 2, y + 1, x + w - 1, y + h - 1, 0x40000000);
+        context.fill(x, y, x + w, y + h, 0xFF000000);
+        context.fill(x + 1, y + 1, x + w - 1, y + h - 1, bgColor);
+        context.fill(x + 1, y + 1, x + w - 1, y + 2, 0x40FFFFFF);
+        context.fill(x + 1, y + 1, x + 2, y + h - 1, 0x40FFFFFF);
+        context.fill(x + 1, y + h - 2, x + w - 1, y + h - 1, 0x40000000);
+        context.fill(x + w - 2, y + 1, x + w - 1, y + h - 1, 0x40000000);
 
         int textColor = disabled ? 0xFF888888 : (hovered ? 0xFFFFFFAA : 0xFFFFFFFF);
-        graphics.centeredText(this.font, text.getString(), x + (w / 2), y + (h - 8) / 2 + 1, textColor);
+        context.drawCenteredTextWithShadow(this.textRenderer, text.getString(), x + (w / 2), y + (h - 8) / 2 + 1, textColor);
     }
 
     private void refreshStatusesForCurrentFriends() {
@@ -486,26 +516,42 @@ public class FriendsScreen extends Screen {
         }
 
         statusFetchAtMillis.put(username, now);
-        FriendManager.getInstance().getIngameOnlineStatus(username).thenAccept(status -> this.minecraft.execute(() -> onlineStatusByName.put(username, status.is_ingame_online()))).exceptionally(_ -> null).whenComplete((_, _) -> inFlightStatusFetches.remove(username));
+        FriendManager manager = FriendManager.getInstanceOrNull();
+        if (manager == null) {
+            inFlightStatusFetches.remove(username);
+            return;
+        }
+        manager.getIngameOnlineStatus(username)
+                .thenAccept(status -> this.client.execute(() -> onlineStatusByName.put(username, status.is_ingame_online())))
+                .exceptionally(ex -> null)
+                .whenComplete((r, t) -> inFlightStatusFetches.remove(username));
     }
 
-    private static Component tr(String key, Object... args) {
-        return Component.translatable(TRANSLATION_PREFIX + key, args);
+    private static MutableText tr(String key, Object... args) {
+        return Text.translatable(TRANSLATION_PREFIX + key, args);
     }
 
-    private Identifier getFixedSkinTexture(Supplier<PlayerSkin> skinSupplier) {
-        Identifier skinId = skinSupplier.get().body().id();
+    private FriendManager getFriendManagerOrClose() {
+        FriendManager manager = FriendManager.getInstanceOrNull();
+        if (manager == null && this.client != null) {
+            this.client.setScreen(null);
+        }
+        return manager;
+    }
+
+    private Identifier getFixedSkinTexture(Supplier<Identifier> skinSupplier) {
+        Identifier skinId = skinSupplier.get();
         String path = skinId.getPath();
         if (!path.startsWith("textures/") && !path.startsWith("skins/")) {
-            return Identifier.withDefaultNamespace("textures/" + path + ".png");
+            return Identifier.of("minecraft", "textures/" + path + ".png");
         }
         return skinId;
     }
 
     @Override
-    public boolean mouseClicked(final MouseButtonEvent event, final boolean doubleClick) {
-        double mx = event.x();
-        double my = event.y();
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        double mx = mouseX;
+        double my = mouseY;
 
         int listX = leftPos + 10;
         int listY = topPos + 55;
@@ -538,9 +584,13 @@ public class FriendsScreen extends Screen {
                     }
                     // Button 2: Remove
                     if (clickedBtn2) {
-                        FriendManager.getInstance().removeFriend(friend.id()).thenAccept(success -> {
+                        FriendManager manager = FriendManager.getInstanceOrNull();
+                        if (manager == null) {
+                            return true;
+                        }
+                        manager.removeFriend(friend.id()).thenAccept(success -> {
                             if (success) {
-                                this.minecraft.execute(this::refreshData); // Liste neu laden
+                                this.client.execute(this::refreshData);
                             }
                         });
                         return true;
@@ -549,18 +599,26 @@ public class FriendsScreen extends Screen {
                     UserDto req = requests.get(clickedIndex);
                     // Button 1: Accept
                     if (clickedBtn1) {
-                        FriendManager.getInstance().acceptRequest(req.id()).thenAccept(success -> {
+                        FriendManager manager = FriendManager.getInstanceOrNull();
+                        if (manager == null) {
+                            return true;
+                        }
+                        manager.acceptRequest(req.id()).thenAccept(success -> {
                             if (success) {
-                                this.minecraft.execute(this::refreshData); // Listen updaten
+                                this.client.execute(this::refreshData);
                             }
                         });
                         return true;
                     }
                     // Button 2: Decline
                     if (clickedBtn2) {
-                        FriendManager.getInstance().declineRequest(req.id()).thenAccept(success -> {
+                        FriendManager manager = FriendManager.getInstanceOrNull();
+                        if (manager == null) {
+                            return true;
+                        }
+                        manager.declineRequest(req.id()).thenAccept(success -> {
                             if (success) {
-                                this.minecraft.execute(this::refreshData); // update list
+                                this.client.execute(this::refreshData);
                             }
                         });
                         return true;
@@ -568,28 +626,26 @@ public class FriendsScreen extends Screen {
                 } else if (activeTab == Tab.WORLD_INVITES && clickedIndex < worldInvites.size()) {
                     FriendManager.WorldInviteDto invite = worldInvites.get(clickedIndex);
                     if (clickedBtn2) {
-                        this.minecraft.gui.setScreen(null);
-                        if (this.minecraft.level != null) {
-                            this.minecraft.level.disconnect(Component.empty());
+                        this.client.setScreen(null);
+                        if (this.client.world != null) {
+                            this.client.world.disconnect();
                         }
-                        if (MCTunnelClient.getInstance().getTunnelClient().isConnected()) {
-                            MCTunnelClient.getInstance().getTunnelClient().disconnect();
-                        }
+                        // Always tear down tunnel state before joining an invite, including in-flight connects.
+                        MCTunnelClient.getInstance().getTunnelClient().disconnect();
 
-                        ServerAddress address = ServerAddress.parseString(invite.tunnel_ip());
-                        ServerData serverData = new ServerData(
+                        ServerAddress address = ServerAddress.parse(invite.tunnel_ip());
+                        ServerInfo serverInfo = new ServerInfo(
                                 invite.worldName(),
                                 invite.tunnel_ip(),
-                                ServerData.Type.OTHER
+                                false
                         );
 
-                        ConnectScreen.startConnecting(
+                        ConnectScreen.connect(
                                 new TitleScreen(),
-                                this.minecraft,
+                                this.client,
                                 address,
-                                serverData,
-                                false,
-                                null
+                                serverInfo,
+                                false
                         );
 
                         return true;
@@ -597,38 +653,35 @@ public class FriendsScreen extends Screen {
                 }
             }
         }
-        return super.mouseClicked(event, doubleClick);
+        return super.mouseClicked(mouseX, mouseY, button);
     }
 
     private void handleInviteClick(String friendName) {
-        if (this.minecraft.getSingleplayerServer() == null) {
+        if (this.client.getServer() == null) {
             return;
         }
 
         inviteButtonCooldowns.put(friendName, System.currentTimeMillis());
         playInviteSound();
 
-        String worldName = this.minecraft.getSingleplayerServer().getWorldData().getLevelName();
+        String worldName = this.client.getServer().getSaveProperties().getLevelName();
 
-        if (!this.minecraft.getSingleplayerServer().isPublished()) {
-            this.minecraft.getSingleplayerServer().publishServer(net.minecraft.server.MinecraftServer.MultiplayerScope.LAN, net.minecraft.world.level.GameType.SURVIVAL, false, 25565);
+        // NOTE: verify `isRemote()`/`openToLan(...)` names against your genSources output -
+        // the "publish to LAN" API surface has shifted somewhat between versions.
+        if (!this.client.getServer().isRemote()) {
+            this.client.getServer().openToLan(GameMode.SURVIVAL, false, 25565);
         }
-
 
         if (MCTunnelClient.getInstance().getTunnelClient().isConnected()) {
             executeApiInvite(friendName, worldName, MCTunnelClient.getInstance().getTunnelClient().getHostname());
         } else {
-            TunnelManager.host(this.minecraft, MCTunnelClient.getInstance().getTunnelClient(), hostname -> executeApiInvite(friendName, worldName, hostname));
+            TunnelManager.host(this.client, MCTunnelClient.getInstance().getTunnelClient(), hostname -> executeApiInvite(friendName, worldName, hostname));
         }
     }
 
     private void playInviteSound() {
-        if (this.minecraft.player != null) {
-            this.minecraft.player.playSound(
-                    SoundEvents.UI_BUTTON_CLICK.value(),
-                    0.5f,
-                    1.2f
-            );
+        if (this.client != null) {
+            this.client.getSoundManager().play(PositionedSoundInstance.master(SoundEvents.UI_BUTTON_CLICK, 1.2f));
         }
     }
 
@@ -641,11 +694,15 @@ public class FriendsScreen extends Screen {
     }
 
     private boolean isInSingleplayerWorld() {
-        return this.minecraft.getSingleplayerServer() != null;
+        return this.client.getServer() != null;
     }
 
     private void executeApiInvite(String friendName, String worldName, String tunnelIp) {
-        FriendManager.getInstance().sendWorldInvite(friendName, worldName, tunnelIp).thenAccept(success -> {
+        FriendManager manager = FriendManager.getInstanceOrNull();
+        if (manager == null) {
+            return;
+        }
+        manager.sendWorldInvite(friendName, worldName, tunnelIp).thenAccept(success -> {
             if (success) {
                 System.out.println("[CraftProxy] Sent invite to " + friendName + " for world " + worldName + " at " + tunnelIp);
             } else {
@@ -658,15 +715,14 @@ public class FriendsScreen extends Screen {
         });
     }
 
-
     @Override
-    public boolean mouseScrolled(final double x, final double y, final double scrollX, final double scrollY) {
+    public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
         int listX = leftPos + 10;
         int listY = topPos + 55;
         int listWidth = MODAL_WIDTH - 20;
         int listHeight = MODAL_HEIGHT - 95;
 
-        if (x >= listX && x <= listX + listWidth && y >= listY && y <= listY + listHeight) {
+        if (mouseX >= listX && mouseX <= listX + listWidth && mouseY >= listY && mouseY <= listY + listHeight) {
             int totalContentHeight = switch (activeTab) {
                 case FRIENDS -> friends.size();
                 case REQUESTS -> requests.size();
@@ -675,26 +731,26 @@ public class FriendsScreen extends Screen {
             int maxScroll = Math.max(0, totalContentHeight - listHeight);
 
             if (maxScroll > 0) {
-                this.scrollY -= (int) (scrollY * 20);
-                this.scrollY = Math.clamp(this.scrollY, 0, maxScroll);
+                this.scrollY -= (int) (amount * 20);
+                this.scrollY = MathHelper.clamp(this.scrollY, 0, maxScroll);
             }
             return true;
         }
-        return super.mouseScrolled(x, y, scrollX, scrollY);
+        return super.mouseScrolled(mouseX, mouseY, amount);
     }
 
     @Override
-    public boolean keyPressed(final KeyEvent event) {
-        if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) {
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
             if (this.addFriendField != null && this.addFriendField.isFocused()) {
                 sendFriendRequest();
                 return true;
             }
         }
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
-            this.minecraft.gui.setScreen(null);
+        if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+            this.client.setScreen(null);
             return true;
         }
-        return super.keyPressed(event);
+        return super.keyPressed(keyCode, scanCode, modifiers);
     }
 }

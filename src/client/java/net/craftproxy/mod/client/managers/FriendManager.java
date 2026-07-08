@@ -3,7 +3,7 @@ package net.craftproxy.mod.client.managers;
 import net.craftproxy.mod.client.gui.WorldInviteToast;
 import net.craftproxy.mod.client.utils.HttpUtils;
 import net.craftproxy.mod.client.utils.SkinManager;
-import net.minecraft.client.Minecraft;
+import net.minecraft.client.MinecraftClient;
 
 import java.util.Collections;
 import java.util.HashSet;
@@ -58,6 +58,14 @@ public class FriendManager {
         if (instance == null) {
             throw new IllegalStateException("FriendManager not initialized. Call FriendManager.init(baseUrl, token) first.");
         }
+        return instance;
+    }
+
+    public static boolean isInitialized() {
+        return instance != null;
+    }
+
+    public static FriendManager getInstanceOrNull() {
         return instance;
     }
 
@@ -221,7 +229,7 @@ public class FriendManager {
     }
 
     private void showWorldInviteToast(WorldInviteDto invite) {
-        Minecraft minecraft = Minecraft.getInstance();
+        MinecraftClient minecraft = MinecraftClient.getInstance();
         minecraft.execute(() -> WorldInviteToast.show(
                 invite.hostName(),
                 invite.worldName(),
