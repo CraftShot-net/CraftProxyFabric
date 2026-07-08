@@ -13,6 +13,7 @@
   "screen.craftproxy.friends.button.accept": "Annehmen",
   "screen.craftproxy.friends.button.decline": "Ablehnen",
   "screen.craftproxy.friends.log.request_sent": "Freundschaftsanfrage gesendet an: %s",
+  "screen.craftproxy.friends.error.request_failed": "Freundschaftsanfrage an %s fehlgeschlagen",
   "screen.craftproxy.friends.log.host_invite_sent": "Host-Einladung gesendet an: %s",
   "screen.craftproxy.friends.tab.world_invites": "Welt-Einladungen (%s)",
   "screen.craftproxy.friends.world_invite.from": "Von: %s",

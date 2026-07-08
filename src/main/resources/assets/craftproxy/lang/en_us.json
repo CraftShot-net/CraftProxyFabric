@@ -13,6 +13,7 @@
   "screen.craftproxy.friends.button.accept": "Accept",
   "screen.craftproxy.friends.button.decline": "Decline",
   "screen.craftproxy.friends.log.request_sent": "Friend request sent to: %s",
+  "screen.craftproxy.friends.error.request_failed": "Failed to send friend request to %s",
   "screen.craftproxy.friends.log.host_invite_sent": "Host invite sent to: %s",
   "screen.craftproxy.friends.tab.world_invites": "World Invites (%s)",
   "screen.craftproxy.friends.world_invite.from": "From: %s",

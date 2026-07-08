@@ -74,6 +74,11 @@ public class FriendsScreen extends Screen {
     private final Map<String, Long> inviteButtonCooldowns = new ConcurrentHashMap<>();
     private static final long INVITE_COOLDOWN_MS = 2000L;
 
+    private Component addFriendStatusMessage;
+    private int addFriendStatusColor;
+    private long addFriendStatusExpiresAtMillis;
+    private static final long ADD_FRIEND_STATUS_DURATION_MS = 4000L;
+
     private FriendsScreen() {
         super(tr("title"));
     }
@@ -217,17 +222,26 @@ public class FriendsScreen extends Screen {
                 FriendManager.getInstance().sendRequestByName(name).thenAccept(success -> this.minecraft.execute(() -> {
                     this.addFriendButton.active = true;
                     if (success) {
-                        System.out.println(tr("log.request_sent", name).getString());
+                        setAddFriendStatus(tr("log.request_sent", name), 0xFF55FF55);
                         this.addFriendField.setValue("");
                     } else {
-                        System.out.println("API Error: Failed to send friend request to " + name);
+                        setAddFriendStatus(tr("error.request_failed", name), 0xFFFF5555);
                     }
                 })).exceptionally(_ -> {
-                    this.minecraft.execute(() -> this.addFriendButton.active = true);
+                    this.minecraft.execute(() -> {
+                        this.addFriendButton.active = true;
+                        setAddFriendStatus(tr("error.request_failed", name), 0xFFFF5555);
+                    });
                     return null;
                 });
             }
         }
+    }
+
+    private void setAddFriendStatus(Component message, int color) {
+        this.addFriendStatusMessage = message;
+        this.addFriendStatusColor = color;
+        this.addFriendStatusExpiresAtMillis = System.currentTimeMillis() + ADD_FRIEND_STATUS_DURATION_MS;
     }
 
     @Override
@@ -245,6 +259,19 @@ public class FriendsScreen extends Screen {
 
         super.extractRenderState(graphics, mouseX, mouseY, delta);
         drawList(graphics, mouseX, mouseY);
+        drawAddFriendStatus(graphics);
+    }
+
+    private void drawAddFriendStatus(GuiGraphicsExtractor graphics) {
+        if (addFriendStatusMessage == null) {
+            return;
+        }
+        if (System.currentTimeMillis() >= addFriendStatusExpiresAtMillis) {
+            addFriendStatusMessage = null;
+            return;
+        }
+        String text = truncateText(addFriendStatusMessage.getString(), MODAL_WIDTH - 20);
+        graphics.centeredText(this.font, text, leftPos + (MODAL_WIDTH / 2), topPos + MODAL_HEIGHT - 39, addFriendStatusColor);
     }
 
     private void drawList(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
