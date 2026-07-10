@@ -19,6 +19,11 @@ public class TunnelManager {
         assert mc.getSingleplayerServer() != null;
         mc.getSingleplayerServer().publishServer(MinecraftServer.MultiplayerScope.LAN, GameType.SURVIVAL, false, 25565);
 
+        if(tunnelClient.isConnected()) {
+            tunnelClient.disconnect();
+            //close previous connected tunnel in case it's not successfully closed yet
+        }
+
         tunnelClient.connect(hostname -> mc.execute(() -> {
             if (mc.player != null) {
                 mc.player.sendSystemMessage(Component.empty().append(tr("tunnel_active").withStyle(ChatFormatting.GREEN, ChatFormatting.BOLD)).append(Component.literal("\n")).append(tr("share_ip_prefix").withStyle(ChatFormatting.GRAY)).append(Component.literal(hostname).withStyle(style -> style.withColor(ChatFormatting.GOLD).withUnderlined(true).withClickEvent(new ClickEvent.CopyToClipboard(hostname)).withHoverEvent(new HoverEvent.ShowText(tr("click_to_copy").withStyle(ChatFormatting.YELLOW))))));
