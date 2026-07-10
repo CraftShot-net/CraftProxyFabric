@@ -23,6 +23,11 @@ public class TunnelManager {
             server.openToLan(GameMode.SURVIVAL, false, 25565);
         }
 
+        if(tunnelClient.isConnected()) {
+            tunnelClient.disconnect();
+            //close previous connected tunnel in case it's not successfully closed yet
+        }
+
         tunnelClient.connect(hostname -> mc.execute(() -> {
             if (mc.player != null) {
                 mc.player.sendMessage(
