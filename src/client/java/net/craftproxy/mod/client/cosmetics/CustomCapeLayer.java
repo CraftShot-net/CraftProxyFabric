@@ -16,7 +16,6 @@ import net.minecraft.client.resources.model.EquipmentAssetManager;
 import net.minecraft.client.resources.model.EquipmentClientInfo;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.resources.Identifier;
-import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.equipment.Equippable;
 import org.jspecify.annotations.NonNull;
@@ -31,11 +30,11 @@ public class CustomCapeLayer extends RenderLayer<AvatarRenderState, PlayerModel>
         this.equipmentAssets = equipmentAssets;
     }
 
-    private boolean hasLayer(ItemStack itemStack, EquipmentClientInfo.LayerType layerType) {
+    private boolean hasLayer(ItemStack itemStack) {
         Equippable equippable = itemStack.get(DataComponents.EQUIPPABLE);
         if (equippable != null && equippable.assetId().isPresent()) {
             EquipmentClientInfo equipmentClientInfo = this.equipmentAssets.get(equippable.assetId().get());
-            return !equipmentClientInfo.getLayers(layerType).isEmpty();
+            return !equipmentClientInfo.getLayers(EquipmentClientInfo.LayerType.WINGS).isEmpty();
         }
         return false;
     }
@@ -44,7 +43,7 @@ public class CustomCapeLayer extends RenderLayer<AvatarRenderState, PlayerModel>
     public void submit(@NonNull PoseStack poseStack, @NonNull SubmitNodeCollector submitNodeCollector, int lightCoords,
                        AvatarRenderState state, float yRot, float xRot) {
         if (state.isInvisible || !state.showCape) return;
-        if (hasLayer(state.chestEquipment, EquipmentClientInfo.LayerType.WINGS)) return;
+        if (hasLayer(state.chestEquipment)) return;
         Identifier capeTexture = CapeManager.getCapeFor(state.id);
         if (capeTexture == null) return;
 

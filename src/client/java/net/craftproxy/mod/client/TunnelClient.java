@@ -10,6 +10,8 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.LineBasedFrameDecoder;
 import io.netty.handler.codec.string.StringDecoder;
 import io.netty.handler.codec.string.StringEncoder;
+import io.netty.handler.timeout.IdleStateEvent;
+import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.AttributeKey;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.Minecraft;
@@ -47,6 +49,7 @@ public class TunnelClient {
                     @Override
                     protected void initChannel(SocketChannel ch) {
                         ch.pipeline().addLast(
+                                new IdleStateHandler(0, 0, 15),
                                 new LineBasedFrameDecoder(8192),
                                 new StringDecoder(StandardCharsets.UTF_8),
                                 new StringEncoder(StandardCharsets.UTF_8),
@@ -86,6 +89,15 @@ public class TunnelClient {
     public boolean isConnected() { return connected; }
 
     private class ControlHandler extends SimpleChannelInboundHandler<String> {
+
+        @Override
+        public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+            if (evt instanceof IdleStateEvent) {
+                System.out.println("[CraftProxy] Connection dead, forcing reconnect...");
+                ctx.close();
+            }
+            super.userEventTriggered(ctx, evt);
+        }
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, String msg) {
