@@ -1,8 +1,10 @@
 package net.craftproxy.mod.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import net.craftproxy.mod.client.cosmetics.CustomCapeLayer;
 import net.craftproxy.mod.client.dto.AuthResponseDto;
 import net.craftproxy.mod.client.gui.IconButton;
+import net.craftproxy.mod.client.managers.CapeManager;
 import net.craftproxy.mod.client.managers.FriendManager;
 import net.craftproxy.mod.client.managers.TunnelManager;
 import net.craftproxy.mod.client.screens.FriendsScreen;
@@ -14,6 +16,8 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.LivingEntityFeatureRenderEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.LivingEntityRenderLayerRegistrationCallback;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.minecraft.ChatFormatting;
@@ -22,6 +26,10 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.TitleScreen;
+import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.client.renderer.entity.LivingEntityRenderer;
+import net.minecraft.client.renderer.entity.player.AvatarRenderer;
+import net.minecraft.client.renderer.entity.state.AvatarRenderState;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
@@ -134,6 +142,19 @@ public class MCTunnelClient implements ClientModInitializer {
             if (tunnelClient.isConnected()) { tunnelClient.disconnect();
                 FriendManager.getInstance().clearWorldInvites();
             }
+        });
+
+        LivingEntityRenderLayerRegistrationCallback.EVENT.register((_, entityRenderer, registrationHelper, context) -> {
+            if (entityRenderer instanceof AvatarRenderer<?> avatarRenderer) {
+                registrationHelper.register(new CustomCapeLayer(avatarRenderer, context.getModelSet(), context.getEquipmentAssets()));
+            }
+        });
+
+        LivingEntityFeatureRenderEvents.ALLOW_CAPE_RENDER.register(state -> {
+            if (state instanceof AvatarRenderState avatarState) {
+                return CapeManager.getCapeFor(avatarState.id) == null;
+            }
+            return true;
         });
 
         Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(() -> {
