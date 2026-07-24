@@ -140,10 +140,13 @@ public class MCTunnelClient implements ClientModInitializer {
             DiscordRPCManager.shutdown();
         });
 
+        ClientPlayConnectionEvents.JOIN.register((_, _, _) -> DiscordRPCManager.updateDiscordPresence(mc));
+
         ClientPlayConnectionEvents.DISCONNECT.register((_, _) -> {
             if (tunnelClient.isConnected()) { tunnelClient.disconnect();
                 FriendManager.getInstance().clearWorldInvites();
             }
+            DiscordRPCManager.updateDiscordPresence(mc);
         });
 
         LivingEntityRenderLayerRegistrationCallback.EVENT.register((_, entityRenderer, registrationHelper, context) -> {

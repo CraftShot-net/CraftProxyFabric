@@ -100,6 +100,8 @@ public class DiscordRPCManager {
         initCalled = false;
     }
 
+    private static final String CRAFTPROXY_DOMAIN_SUFFIX = ".craftproxy.net";
+
     public static void updateDiscordPresence(Minecraft mc) {
         String version = "Minecraft " + net.minecraft.SharedConstants.getCurrentVersion().name();
 
@@ -112,11 +114,28 @@ public class DiscordRPCManager {
             int current = mc.getSingleplayerServer().getPlayerCount();
             int max = mc.getSingleplayerServer().getMaxPlayers();
             updatePresence(version, "In World", current, max);
-        } else if (mc.getConnection() != null) {
-            int current = mc.getConnection().getOnlinePlayers().size();
-            updatePresence(version, "In World", current, current);
-        } else {
-            updatePresence(version, "In World", 0, 0);
+            return;
         }
+
+        if (mc.getConnection() != null) {
+            int max = mc.getConnection().getOnlinePlayers().size();
+
+            net.minecraft.client.multiplayer.ServerData server = mc.getCurrentServer();
+            String ip = server != null ? server.ip : null;
+
+            boolean isOwnNetwork = ip != null && ip.toLowerCase().endsWith(CRAFTPROXY_DOMAIN_SUFFIX);
+
+            if (isOwnNetwork || ip == null) {
+                // Our own hosted/tunneled worlds (via /host) feel like singleplayer to the player,
+                // so treat them the same. Unknown IP (e.g. no ServerData available) also falls back here.
+                updatePresence(version, "In World", max, max);
+            } else {
+                // Any other, actually global/public server: just show the IP.
+                updatePresence(version, ip, 0, 0);
+            }
+            return;
+        }
+
+        updatePresence(version, "In World", 0, 0);
     }
 }
