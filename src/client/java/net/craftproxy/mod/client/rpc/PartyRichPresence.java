@@ -3,11 +3,6 @@ package net.craftproxy.mod.client.rpc;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
-/**
- * Standalone Rich Presence data holder (details, state, images, timestamps, party).
- * No longer depends on meteordevelopment:discord-ipc — used together with
- * CraftProxyDiscordIPC, which reimplements the actual pipe connection.
- */
 public class PartyRichPresence implements CraftProxyDiscordIPC.RichPresenceJson {
 
     private String details;
@@ -22,6 +17,9 @@ public class PartyRichPresence implements CraftProxyDiscordIPC.RichPresenceJson 
     private String partyId;
     private int partySize;
     private int partyMax;
+
+    private String button1Label, button1Url;
+    private String button2Label, button2Url;
 
     public void setDetails(String details) {
         this.details = details;
@@ -64,6 +62,29 @@ public class PartyRichPresence implements CraftProxyDiscordIPC.RichPresenceJson 
         this.partyId = null;
     }
 
+    /**
+     * Sets up to two buttons shown on the Rich Presence card. Discord allows a maximum
+     * of two; call with only the first pair to show just one, or with none to clear.
+     *
+     * Note: Discord does not show buttons on your OWN client's presence preview in the
+     * Discord app — you have to check from a friend's account/another client to see them.
+     *
+     * @param label1 text on the first button, or null for none
+     * @param url1   target URL for the first button (must be http/https), or null
+     * @param label2 text on the second button, or null for none
+     * @param url2   target URL for the second button, or null
+     */
+    public void setButtons(String label1, String url1, String label2, String url2) {
+        this.button1Label = label1;
+        this.button1Url = url1;
+        this.button2Label = label2;
+        this.button2Url = url2;
+    }
+
+    public void clearButtons() {
+        setButtons(null, null, null, null);
+    }
+
     @Override
     public JsonObject toJson() {
         JsonObject o = new JsonObject();
@@ -97,6 +118,23 @@ public class PartyRichPresence implements CraftProxyDiscordIPC.RichPresenceJson 
             party.add("size", size);
 
             o.add("party", party);
+        }
+
+        JsonArray buttons = new JsonArray();
+        if (button1Label != null && button1Url != null) {
+            JsonObject b1 = new JsonObject();
+            b1.addProperty("label", button1Label);
+            b1.addProperty("url", button1Url);
+            buttons.add(b1);
+        }
+        if (button2Label != null && button2Url != null) {
+            JsonObject b2 = new JsonObject();
+            b2.addProperty("label", button2Label);
+            b2.addProperty("url", button2Url);
+            buttons.add(b2);
+        }
+        if (!buttons.isEmpty()) {
+            o.add("buttons", buttons);
         }
 
         return o;
