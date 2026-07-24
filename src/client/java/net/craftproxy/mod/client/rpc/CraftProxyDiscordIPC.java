@@ -90,6 +90,9 @@ public class CraftProxyDiscordIPC {
         }
     }
 
+    /**
+     * Closes the connection if it is open.
+     */
     public static synchronized void stop() {
         if (pipe == null) {
             return;
@@ -141,21 +144,46 @@ public class CraftProxyDiscordIPC {
     }
 
     private static void readLoop() {
-        try {
-            while (true) {
+        while (true) {
+            try {
                 int opcode = Integer.reverseBytes(readInt());
                 int length = Integer.reverseBytes(readInt());
+
+                if (length < 0 || length > 10_000_000) {
+                    // Sanity check: something is desynced on the wire, bail out entirely
+                    // rather than trying to allocate/read a bogus amount of data.
+                    throw new IOException("Implausible frame length: " + length);
+                }
 
                 byte[] data = new byte[length];
                 readFully(data);
 
                 String json = new String(data, StandardCharsets.UTF_8);
-                onPacket(opcode, JsonParser.parseString(json).getAsJsonObject());
+                handleFrame(opcode, json);
+            } catch (IOException e) {
+                // Real connection failure - the pipe is gone, stop for good.
+                System.out.println("[CraftProxy] Discord IPC connection closed: " + e.getMessage());
+                stop();
+                return;
+            } catch (Exception e) {
+                // Anything else (bad JSON, unexpected shape, etc.) - log it, skip this
+                // one frame, and keep the connection alive.
+                System.out.println("[CraftProxy] Ignored malformed Discord IPC frame: " + e);
             }
-        } catch (Exception e) {
-            System.out.println("[CraftProxy] Discord IPC connection closed: " + e.getMessage());
-            stop();
         }
+    }
+
+    private static void handleFrame(int opcode, String json) {
+        if (json.isBlank()) {
+            return; // e.g. PING/PONG frames with no meaningful body
+        }
+
+        com.google.gson.JsonElement parsed = JsonParser.parseString(json);
+        if (!parsed.isJsonObject()) {
+            return; // e.g. a literal "null" body - nothing to act on
+        }
+
+        onPacket(opcode, parsed.getAsJsonObject());
     }
 
     private static int readInt() throws IOException {
@@ -186,15 +214,19 @@ public class CraftProxyDiscordIPC {
 
     private static void onPacket(int opcode, JsonObject data) {
         if (opcode == OP_CLOSE) {
-            int code = data.has("code") ? data.get("code").getAsInt() : -1;
-            String message = data.has("message") ? data.get("message").getAsString() : "connection closed";
+            int code = data.has("code") && !data.get("code").isJsonNull() ? data.get("code").getAsInt() : -1;
+            String message = data.has("message") && !data.get("message").isJsonNull() ? data.get("message").getAsString() : "connection closed";
             onError.accept(code, message);
             stop();
         } else if (opcode == OP_FRAME) {
-            if (data.has("evt") && "ERROR".equals(data.get("evt").getAsString())) {
-                JsonObject d = data.getAsJsonObject("data");
-                onError.accept(d.get("code").getAsInt(), d.get("message").getAsString());
-            } else if (data.has("cmd") && "DISPATCH".equals(data.get("cmd").getAsString())) {
+            if (data.has("evt") && !data.get("evt").isJsonNull() && "ERROR".equals(data.get("evt").getAsString())) {
+                if (data.has("data") && data.get("data").isJsonObject()) {
+                    JsonObject d = data.getAsJsonObject("data");
+                    int code = d.has("code") && !d.get("code").isJsonNull() ? d.get("code").getAsInt() : -1;
+                    String message = d.has("message") && !d.get("message").isJsonNull() ? d.get("message").getAsString() : "unknown error";
+                    onError.accept(code, message);
+                }
+            } else if (data.has("cmd") && !data.get("cmd").isJsonNull() && "DISPATCH".equals(data.get("cmd").getAsString())) {
                 receivedDispatch = true;
 
                 if (onReady != null) {
