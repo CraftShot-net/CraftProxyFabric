@@ -7,6 +7,7 @@ import net.craftproxy.mod.client.gui.IconButton;
 import net.craftproxy.mod.client.managers.CapeManager;
 import net.craftproxy.mod.client.managers.FriendManager;
 import net.craftproxy.mod.client.managers.TunnelManager;
+import net.craftproxy.mod.client.rpc.DiscordRPCManager;
 import net.craftproxy.mod.client.screens.FriendsScreen;
 import net.craftproxy.mod.client.utils.HttpUtils;
 import net.fabricmc.api.ClientModInitializer;
@@ -26,8 +27,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.TitleScreen;
-import net.minecraft.client.player.AbstractClientPlayer;
-import net.minecraft.client.renderer.entity.LivingEntityRenderer;
 import net.minecraft.client.renderer.entity.player.AvatarRenderer;
 import net.minecraft.client.renderer.entity.state.AvatarRenderState;
 import net.minecraft.network.chat.Component;
@@ -62,6 +61,8 @@ public class MCTunnelClient implements ClientModInitializer {
         ClientLifecycleEvents.CLIENT_STARTED.register(_ -> {
             lastKnownMcToken = mc.getUser().getAccessToken();
             authenticate(mc);
+
+            DiscordRPCManager.init();
         });
 
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, _) -> {
@@ -136,6 +137,7 @@ public class MCTunnelClient implements ClientModInitializer {
         ClientLifecycleEvents.CLIENT_STOPPING.register(_ -> {
             if (tunnelClient.isConnected()) tunnelClient.disconnect();
             FriendManager.shutdownAndSetOffline();
+            DiscordRPCManager.shutdown();
         });
 
         ClientPlayConnectionEvents.DISCONNECT.register((_, _) -> {
@@ -165,6 +167,15 @@ public class MCTunnelClient implements ClientModInitializer {
             } catch (Exception ignored) {
                 // ingore to keep thread alive
             }
+
+            try {
+                System.out.println("[CraftProxy] Calling updateDiscordPresence...");
+                DiscordRPCManager.updateDiscordPresence(mc);
+            } catch (Exception e) {
+                System.out.println("[CraftProxy] Discord presence update failed: " + e);
+                e.printStackTrace();
+            }
+
         }, 10, 30, TimeUnit.SECONDS);
 
     }
