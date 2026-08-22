@@ -15,7 +15,10 @@ import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.AttributeKey;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.Minecraft;
+
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -34,6 +37,7 @@ public class TunnelClient {
     private volatile boolean intentionalDisconnect = false;
     private Consumer<String> onReadyCallback;
     private static final String prefix = "§7(§6CraftProxy§7) ";
+
     public void connect(Consumer<String> onReady) {
         this.onReadyCallback = onReady;
         this.intentionalDisconnect = false;
@@ -43,20 +47,12 @@ public class TunnelClient {
 
     private void doConnect() {
         Bootstrap bootstrap = new Bootstrap();
-        bootstrap.group(group)
-                .channel(NioSocketChannel.class)
-                .handler(new ChannelInitializer<SocketChannel>() {
-                    @Override
-                    protected void initChannel(SocketChannel ch) {
-                        ch.pipeline().addLast(
-                                new IdleStateHandler(0, 0, 15),
-                                new LineBasedFrameDecoder(8192),
-                                new StringDecoder(StandardCharsets.UTF_8),
-                                new StringEncoder(StandardCharsets.UTF_8),
-                                new ControlHandler()
-                        );
-                    }
-                });
+        bootstrap.group(group).channel(NioSocketChannel.class).handler(new ChannelInitializer<SocketChannel>() {
+            @Override
+            protected void initChannel(SocketChannel ch) {
+                ch.pipeline().addLast(new IdleStateHandler(0, 0, 40), new LineBasedFrameDecoder(8192), new StringDecoder(StandardCharsets.UTF_8), new StringEncoder(StandardCharsets.UTF_8), new ControlHandler());
+            }
+        });
 
         bootstrap.connect(SERVER_HOST, CONTROL_PORT).addListener((ChannelFuture f) -> {
             if (f.isSuccess()) {
@@ -85,8 +81,13 @@ public class TunnelClient {
         group = null;
     }
 
-    public String getHostname() { return assignedHostname; }
-    public boolean isConnected() { return connected; }
+    public String getHostname() {
+        return assignedHostname;
+    }
+
+    public boolean isConnected() {
+        return connected;
+    }
 
     private class ControlHandler extends SimpleChannelInboundHandler<String> {
 
@@ -97,6 +98,12 @@ public class TunnelClient {
                 ctx.close();
             }
             super.userEventTriggered(ctx, evt);
+        }
+
+        @Override
+        public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+            System.err.println("[CraftProxy] Control Channel Error: " + cause.getMessage());
+            ctx.close();
         }
 
         @Override
@@ -116,11 +123,10 @@ public class TunnelClient {
                 String text = msg.substring(10);
                 Minecraft mc = Minecraft.getInstance();
                 if (mc.getSingleplayerServer() != null) {
-                    mc.execute(() -> mc.getSingleplayerServer()
-                            .getPlayerList()
-                            .broadcastSystemMessage(
-                                    Component.literal(text), false
-                            ));
+                    mc.execute(() -> {
+                        assert mc.getSingleplayerServer() != null;
+                        mc.getSingleplayerServer().getPlayerList().broadcastSystemMessage(Component.literal(text), false);
+                    });
                 }
 
             } else if (msg.equals("SHUTDOWN")) {
@@ -129,9 +135,7 @@ public class TunnelClient {
                 Minecraft mc = Minecraft.getInstance();
                 mc.execute(() -> {
                     if (mc.player != null) {
-                        mc.player.sendSystemMessage(
-                                Component.literal(prefix + "§c" + tr("server_closed").getString())
-                        );
+                        mc.player.sendSystemMessage(Component.literal(prefix + "§c" + tr("server_closed").getString()));
                     }
                 });
             } else if (msg.equals("PING")) {
@@ -143,9 +147,7 @@ public class TunnelClient {
                 Minecraft mc = Minecraft.getInstance();
                 mc.execute(() -> {
                     if (mc.player != null) {
-                        mc.player.sendSystemMessage(
-                                Component.literal(prefix + "§c" + tr("error", errorMsg).getString())
-                        );
+                        mc.player.sendSystemMessage(Component.literal(prefix + "§c" + tr("error", errorMsg).getString()));
                     }
                 });
             }
@@ -159,9 +161,7 @@ public class TunnelClient {
                 Minecraft mc = Minecraft.getInstance();
                 mc.execute(() -> {
                     if (mc.player != null) {
-                        mc.player.sendSystemMessage(
-                                Component.literal(prefix + "§c" + tr("reconnecting").getString())
-                        );
+                        mc.player.sendSystemMessage(Component.literal(prefix + "§c" + tr("reconnecting").getString()));
                     }
                 });
                 scheduleReconnect();
@@ -175,15 +175,13 @@ public class TunnelClient {
 
     private void openBridge(String sessionId, String playerIp) {
         Bootstrap bridge = new Bootstrap();
-        bridge.group(group)
-                .channel(NioSocketChannel.class)
-                .handler(new ChannelInitializer<SocketChannel>() {
-                    @Override
-                    protected void initChannel(SocketChannel ch) {
-                        ch.attr(PLAYER_IP).set(playerIp);
-                        ch.pipeline().addLast(new BridgeInitHandler(sessionId));
-                    }
-                });
+        bridge.group(group).channel(NioSocketChannel.class).handler(new ChannelInitializer<SocketChannel>() {
+            @Override
+            protected void initChannel(SocketChannel ch) {
+                ch.attr(PLAYER_IP).set(playerIp);
+                ch.pipeline().addLast(new BridgeInitHandler(sessionId));
+            }
+        });
 
         bridge.connect(SERVER_HOST, BRIDGE_PORT).addListener((ChannelFuture f) -> {
             if (!f.isSuccess()) {
@@ -196,6 +194,7 @@ public class TunnelClient {
 
         private final String sessionId;
         private boolean identified = false;
+        private final List<ByteBuf> queue = new ArrayList<>();
 
         BridgeInitHandler(String sessionId) {
             this.sessionId = sessionId;
@@ -209,9 +208,14 @@ public class TunnelClient {
 
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
+            if (!(msg instanceof ByteBuf buf)) return;
+
             if (!identified) {
                 identified = true;
-                ctx.pipeline().remove(this);
+
+                ctx.channel().config().setAutoRead(false);
+
+                queue.add(buf.retain());
 
                 Bootstrap local = new Bootstrap();
                 local.group(group)
@@ -219,31 +223,48 @@ public class TunnelClient {
                         .handler(new ChannelInitializer<SocketChannel>() {
                             @Override
                             protected void initChannel(SocketChannel ch) {
-                                ch.attr(PLAYER_IP).set(
-                                        ctx.channel().attr(PLAYER_IP).get()
-                                );
-                                Channel tunnelChannel = ctx.channel();
-                                ch.pipeline().addLast(new RelayHandler(tunnelChannel));
-                                tunnelChannel.pipeline().addLast(new RelayHandler(ch));
+                                ch.attr(PLAYER_IP).set(ctx.channel().attr(PLAYER_IP).get());
+                                ch.pipeline().addLast(new RelayHandler(ctx.channel()));
                             }
                         });
 
                 local.connect("127.0.0.1", 25565).addListener((ChannelFuture f) -> {
-                    if (f.isSuccess()) {
-                        controlChannel.writeAndFlush("READY " + sessionId + "\n");
-                        if (msg instanceof ByteBuf buf && buf.isReadable()) {
-                            f.channel().writeAndFlush(buf.retain());
+                    ctx.executor().execute(() -> {
+                        if (f.isSuccess()) {
+                            io.netty.channel.Channel localChannel = f.channel();
+                            controlChannel.writeAndFlush("READY " + sessionId + "\n");
+                            ctx.pipeline().addLast(new RelayHandler(localChannel));
+
+                            for (ByteBuf queuedMsg : queue) {
+                                localChannel.writeAndFlush(queuedMsg);
+                            }
+                            queue.clear();
+
+                            ctx.pipeline().remove(BridgeInitHandler.this);
+
+                            ctx.channel().config().setAutoRead(true);
+                        } else {
+                            for (ByteBuf queuedMsg : queue) {
+                                queuedMsg.release();
+                            }
+                            queue.clear();
+                            ctx.close();
                         }
-                    } else {
-                        ctx.close();
-                    }
-                    if (msg instanceof ByteBuf buf) buf.release();
+                    });
                 });
+            } else {
+                queue.add(buf.retain());
             }
+
+            buf.release();
         }
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+            for (ByteBuf queuedMsg : queue) {
+                queuedMsg.release();
+            }
+            queue.clear();
             ctx.close();
         }
     }
@@ -264,6 +285,14 @@ public class TunnelClient {
                 ((ByteBuf) msg).release();
                 ctx.close();
             }
+        }
+
+        @Override
+        public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception {
+            if (target.isActive()) {
+                target.config().setAutoRead(ctx.channel().isWritable());
+            }
+            super.channelWritabilityChanged(ctx);
         }
 
         @Override
