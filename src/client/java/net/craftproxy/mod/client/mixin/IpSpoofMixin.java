@@ -13,7 +13,7 @@ import java.net.SocketAddress;
 @Mixin(Connection.class)
 public class IpSpoofMixin {
 
-    @Inject(method = "getRemoteAddress", at = @At("RETURN"))
+    @Inject(method = "getRemoteAddress", at = @At("RETURN"), cancellable = true)
     private void spoofRemoteAddress(CallbackInfoReturnable<SocketAddress> cir) {
         SocketAddress original = cir.getReturnValue();
         if (original instanceof InetSocketAddress addr) {

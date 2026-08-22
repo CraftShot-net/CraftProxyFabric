@@ -244,6 +244,10 @@ public class TunnelClient {
 
                             ctx.channel().config().setAutoRead(true);
                         } else {
+                            System.err.println("[CraftProxy] FATAL: Failed to connect to local Minecraft server on 127.0.0.1:25565! Cause: " + f.cause());
+                            if (f.cause() != null) {
+                                f.cause().printStackTrace();
+                            }
                             for (ByteBuf queuedMsg : queue) {
                                 queuedMsg.release();
                             }
@@ -261,6 +265,8 @@ public class TunnelClient {
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+            System.err.println("[CraftProxy] BridgeInitHandler Exception: " + cause);
+            cause.printStackTrace();
             for (ByteBuf queuedMsg : queue) {
                 queuedMsg.release();
             }
@@ -302,6 +308,8 @@ public class TunnelClient {
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+            System.err.println("[CraftProxy] RelayHandler Exception: " + cause);
+            cause.printStackTrace();
             ctx.close();
         }
     }
