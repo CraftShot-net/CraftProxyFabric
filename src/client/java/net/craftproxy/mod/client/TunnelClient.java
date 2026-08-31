@@ -21,6 +21,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.UUID;
+import java.util.Map;
+import java.util.HashMap;
+import net.craftproxy.mod.client.utils.HttpUtils;
 
 public class TunnelClient {
     private static final String TRANSLATION_PREFIX = "message.craftproxy.tunnel.";
@@ -57,8 +61,28 @@ public class TunnelClient {
         bootstrap.connect(SERVER_HOST, CONTROL_PORT).addListener((ChannelFuture f) -> {
             if (f.isSuccess()) {
                 controlChannel = f.channel();
-                String token = Minecraft.getInstance().getUser().getAccessToken();
-                controlChannel.writeAndFlush("REGISTER " + token + "\n");
+                
+                new Thread(() -> {
+                    try {
+                        String mcToken = Minecraft.getInstance().getUser().getAccessToken();
+                        String username = Minecraft.getInstance().getUser().getName();
+                        String uuid = Minecraft.getInstance().getUser().getProfileId().toString().replace("-", "");
+                        String serverId = UUID.randomUUID().toString().replace("-", "");
+
+                        HttpUtils mojangApi = new HttpUtils("https://sessionserver.mojang.com");
+                        Map<String, String> joinBody = new HashMap<>();
+                        joinBody.put("accessToken", mcToken);
+                        joinBody.put("selectedProfile", uuid);
+                        joinBody.put("serverId", serverId);
+
+                        mojangApi.post("/session/minecraft/join", joinBody);
+
+                        controlChannel.writeAndFlush("LOGIN " + username + " " + serverId + "\n");
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }).start();
+                
                 connected = true;
             } else {
                 scheduleReconnect();
