@@ -36,6 +36,7 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
@@ -218,10 +219,27 @@ public class MCTunnelClient implements ClientModInitializer {
         new Thread(() -> {
             try {
                 String mcToken = mc.getUser().getAccessToken();
+                String username = mc.getUser().getName();
+                String uuid = mc.getUser().getProfileId().toString().replace("-", "");
+                String serverId = UUID.randomUUID().toString().replace("-", "");
+
+                HttpUtils mojangApi = new HttpUtils("https://sessionserver.mojang.com");
+                Map<String, String> joinBody = new HashMap<>();
+                joinBody.put("accessToken", mcToken);
+                joinBody.put("selectedProfile", uuid);
+                joinBody.put("serverId", serverId);
+
+                HttpUtils.Response mojangRes = mojangApi.post("/session/minecraft/join", joinBody);
+
+                if (!mojangRes.isSuccessful() && mojangRes.status() != 204) {
+                    System.err.println("[CraftProxy] Mojang join failed: " + mojangRes.status());
+                    return;
+                }
 
                 HttpUtils api = new HttpUtils("https://backend.craftproxy.net/");
                 Map<String, String> body = new HashMap<>();
-                body.put("minecraft_token", mcToken);
+                body.put("username", username);
+                body.put("server_id", serverId);
 
                 HttpUtils.Response res = api.post("/auth/minecraft", body);
 
