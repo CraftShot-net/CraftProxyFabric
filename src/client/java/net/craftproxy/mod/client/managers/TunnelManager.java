@@ -17,7 +17,7 @@ public class TunnelManager {
 
     public static void host(Minecraft mc, TunnelClient tunnelClient, Consumer<String> onConnected) {
         assert mc.getSingleplayerServer() != null;
-        mc.getSingleplayerServer().publishServer(MinecraftServer.MultiplayerScope.LAN, GameType.SURVIVAL, false, 25565);
+        mc.getSingleplayerServer().publishServer(MinecraftServer.MultiplayerScope.LAN, false, 25565);
 
         if(tunnelClient.isConnected()) {
             tunnelClient.disconnect();

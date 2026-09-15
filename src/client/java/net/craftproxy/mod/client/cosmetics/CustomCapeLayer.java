@@ -50,7 +50,7 @@ public class CustomCapeLayer extends RenderLayer<AvatarRenderState, PlayerModel>
         poseStack.pushPose();
         submitNodeCollector.submitModel(this.model, state, poseStack,
                 RenderTypes.entitySolid(capeTexture), lightCoords, OverlayTexture.NO_OVERLAY,
-                state.outlineColor, null);
+                state.outlineColor);
         poseStack.popPose();
     }
 }

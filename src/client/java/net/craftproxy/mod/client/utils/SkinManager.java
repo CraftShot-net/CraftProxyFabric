@@ -2,10 +2,10 @@ package net.craftproxy.mod.client.utils;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.mojang.authlib.services.ProfileResult;
 import net.minecraft.world.entity.player.PlayerSkin;
 
 import com.mojang.authlib.GameProfile;
-import com.mojang.authlib.yggdrasil.ProfileResult;
 import net.minecraft.client.Minecraft;
 
 import java.net.URI;

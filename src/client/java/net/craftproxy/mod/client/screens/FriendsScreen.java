@@ -17,10 +17,11 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.resources.Identifier;
 import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.entity.player.PlayerSkin;
 import org.jspecify.annotations.NonNull;
-import org.lwjgl.glfw.GLFW;
+import org.lwjgl.sdl.SDLKeycode;
 
 import java.util.List;
 import java.util.Map;
@@ -611,7 +612,7 @@ public class FriendsScreen extends Screen {
         String worldName = this.minecraft.getSingleplayerServer().getWorldData().getLevelName();
 
         if (!this.minecraft.getSingleplayerServer().isPublished()) {
-            this.minecraft.getSingleplayerServer().publishServer(net.minecraft.server.MinecraftServer.MultiplayerScope.LAN, net.minecraft.world.level.GameType.SURVIVAL, false, 25565);
+            this.minecraft.getSingleplayerServer().publishServer(MinecraftServer.MultiplayerScope.LAN, false, 25565);
         }
 
 
@@ -685,13 +686,13 @@ public class FriendsScreen extends Screen {
 
     @Override
     public boolean keyPressed(final KeyEvent event) {
-        if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) {
+        if (event.key() == SDLKeycode.SDLK_KP_ENTER) {
             if (this.addFriendField != null && this.addFriendField.isFocused()) {
                 sendFriendRequest();
                 return true;
             }
         }
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+        if (event.key() == SDLKeycode.SDLK_ESCAPE) {
             this.minecraft.gui.setScreen(null);
             return true;
         }
