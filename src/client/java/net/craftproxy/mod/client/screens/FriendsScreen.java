@@ -1,5 +1,6 @@
 package net.craftproxy.mod.client.screens;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import net.craftproxy.mod.client.MCTunnelClient;
 import net.craftproxy.mod.client.managers.FriendManager;
 import net.craftproxy.mod.client.managers.FriendManager.UserDto;
@@ -21,7 +22,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.entity.player.PlayerSkin;
 import org.jspecify.annotations.NonNull;
-import org.lwjgl.sdl.SDLKeycode;
 
 import java.util.List;
 import java.util.Map;
@@ -686,13 +686,13 @@ public class FriendsScreen extends Screen {
 
     @Override
     public boolean keyPressed(final KeyEvent event) {
-        if (event.key() == SDLKeycode.SDLK_KP_ENTER) {
+        if (event.key() == InputConstants.KEY_RETURN) {
             if (this.addFriendField != null && this.addFriendField.isFocused()) {
                 sendFriendRequest();
                 return true;
             }
         }
-        if (event.key() == SDLKeycode.SDLK_ESCAPE) {
+        if (event.key() == InputConstants.KEY_ESCAPE) {
             this.minecraft.gui.setScreen(null);
             return true;
         }

@@ -32,7 +32,6 @@ import net.minecraft.client.renderer.entity.state.AvatarRenderState;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
-import org.lwjgl.sdl.SDLKeycode;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -47,7 +46,7 @@ public class MCTunnelClient implements ClientModInitializer {
     public static String apiToken = null;
     private static String lastKnownMcToken = null;
     public static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("craftproxy", "keys"));
-    private static final KeyMapping openFriendsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.craftproxy.open_friends", InputConstants.Type.KEYBOARD, SDLKeycode.SDLK_I, CATEGORY));
+    private static final KeyMapping openFriendsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.craftproxy.open_friends", InputConstants.Type.KEYBOARD, InputConstants.KEY_I, CATEGORY));
 
     // Layout for the vertical mod-button column next to the (204px wide) vanilla pause menu.
     private static final int MOD_BUTTON_MARGIN = 2;
