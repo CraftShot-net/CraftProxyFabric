@@ -53,11 +53,18 @@ public class CapeManager {
      * Called from CustomCapeLayer.submit() every frame -- must never block.
      */
     public static Identifier getCapeFor(int entityId) {
-        assert Minecraft.getInstance().level != null;
-        Entity entity = Minecraft.getInstance().level.getEntity(entityId);
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player != null && mc.player.getId() == entityId) {
+            return getCapeForUUID(mc.player.getUUID());
+        }
+        if (mc.level == null) return null;
+        Entity entity = mc.level.getEntity(entityId);
         if (!(entity instanceof Player player)) return null;
+        return getCapeForUUID(player.getUUID());
+    }
 
-        UUID uuid = player.getUUID();
+    public static Identifier getCapeForUUID(UUID uuid) {
+        if (uuid == null) return null;
         String cosmeticId = EQUIPPED_CAPES.get(uuid);
 
         if (cosmeticId == null) {
@@ -77,6 +84,21 @@ public class CapeManager {
 
         if (DOWNLOAD_IN_PROGRESS.putIfAbsent(cosmeticId, Boolean.TRUE) == null) {
             new Thread(() -> downloadAndRegister(cosmeticId, url), "craftproxy-cape-download-" + cosmeticId).start();
+        }
+        return null;
+    }
+
+    public static Identifier getLocalPlayerEquippedCape() {
+        if (WardrobeManager.isInitialized()) {
+            for (var cosmetic : WardrobeManager.getInstance().getCachedCosmetics()) {
+                if ("cape".equalsIgnoreCase(cosmetic.type()) && cosmetic.equipped()) {
+                    return getLoadedTexture(cosmetic.cosmeticId());
+                }
+            }
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.getUser() != null && mc.getUser().getProfileId() != null) {
+            return getCapeForUUID(mc.getUser().getProfileId());
         }
         return null;
     }
@@ -137,6 +159,32 @@ public class CapeManager {
             System.err.println("[CraftProxy] Failed to load cape texture " + cosmeticId + ": " + e.getMessage());
         } finally {
             DOWNLOAD_IN_PROGRESS.remove(cosmeticId);
+        }
+    }
+
+    public static void updateLocalPlayerCape(UUID uuid, String cosmeticId, String textureUrl) {
+        if (cosmeticId == null) {
+            EQUIPPED_CAPES.put(uuid, NONE);
+        } else {
+            EQUIPPED_CAPES.put(uuid, cosmeticId);
+            if (textureUrl != null) {
+                TEXTURE_URLS.put(cosmeticId, textureUrl);
+                if (!LOADED_TEXTURES.containsKey(cosmeticId) && DOWNLOAD_IN_PROGRESS.putIfAbsent(cosmeticId, Boolean.TRUE) == null) {
+                    new Thread(() -> downloadAndRegister(cosmeticId, textureUrl), "craftproxy-cape-download-" + cosmeticId).start();
+                }
+            }
+        }
+    }
+
+    public static Identifier getLoadedTexture(String cosmeticId) {
+        return LOADED_TEXTURES.get(cosmeticId);
+    }
+
+    public static void preloadTexture(String cosmeticId, String textureUrl) {
+        if (cosmeticId == null || textureUrl == null) return;
+        TEXTURE_URLS.put(cosmeticId, textureUrl);
+        if (!LOADED_TEXTURES.containsKey(cosmeticId) && DOWNLOAD_IN_PROGRESS.putIfAbsent(cosmeticId, Boolean.TRUE) == null) {
+            new Thread(() -> downloadAndRegister(cosmeticId, textureUrl), "craftproxy-cape-download-" + cosmeticId).start();
         }
     }
 }
