@@ -7,8 +7,10 @@ import net.craftproxy.mod.client.gui.IconButton;
 import net.craftproxy.mod.client.managers.CapeManager;
 import net.craftproxy.mod.client.managers.FriendManager;
 import net.craftproxy.mod.client.managers.TunnelManager;
+import net.craftproxy.mod.client.managers.WardrobeManager;
 import net.craftproxy.mod.client.rpc.DiscordRPCManager;
 import net.craftproxy.mod.client.screens.FriendsScreen;
+import net.craftproxy.mod.client.screens.WardrobeScreen;
 import net.craftproxy.mod.client.utils.HttpUtils;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -47,6 +49,7 @@ public class MCTunnelClient implements ClientModInitializer {
     private static String lastKnownMcToken = null;
     public static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("craftproxy", "keys"));
     private static final KeyMapping openFriendsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.craftproxy.open_friends", InputConstants.Type.KEYBOARD, InputConstants.KEY_I, CATEGORY));
+    private static final KeyMapping openWardrobeKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.craftproxy.open_wardrobe", InputConstants.Type.KEYBOARD, InputConstants.KEY_H, CATEGORY));
 
     // Layout for the vertical mod-button column next to the (204px wide) vanilla pause menu.
     private static final int MOD_BUTTON_MARGIN = 2;
@@ -69,12 +72,23 @@ public class MCTunnelClient implements ClientModInitializer {
             if (screen instanceof PauseScreen) {
                 findButtonByText(screen, Component.translatable("menu.returnToGame").getString())
                         .ifPresentOrElse(
-                                anchor -> addFriendsIconButton(client, screen, anchor.getX() + anchor.getWidth() + MOD_BUTTON_MARGIN, anchor.getY()),
-                                () -> addFriendsIconButton(client, screen, (scaledWidth / 2) + (204 / 2) + MOD_BUTTON_MARGIN, MOD_BUTTON_COLUMN_TOP)
+                                anchor -> {
+                                    int bx = anchor.getX() + anchor.getWidth() + MOD_BUTTON_MARGIN;
+                                    int by = anchor.getY();
+                                    addFriendsIconButton(client, screen, bx, by);
+                                    addWardrobeIconButton(client, screen, bx, by + 24);
+                                },
+                                () -> {
+                                    int bx = (scaledWidth / 2) + (204 / 2) + MOD_BUTTON_MARGIN;
+                                    addFriendsIconButton(client, screen, bx, MOD_BUTTON_COLUMN_TOP);
+                                    addWardrobeIconButton(client, screen, bx, MOD_BUTTON_COLUMN_TOP + 24);
+                                }
                         );
             } else if (screen instanceof TitleScreen) {
-                // Top-right corner;
+                // Top-right corner: Friends, Wardrobe, Discord
                 addFriendsIconButton(client, screen, scaledWidth - 24, 6);
+                addWardrobeIconButton(client, screen, scaledWidth - 48, 6);
+                addDiscordIconButton(client, screen, scaledWidth - 72, 6);
             }
         });
 
@@ -83,6 +97,12 @@ public class MCTunnelClient implements ClientModInitializer {
             while (openFriendsKey.consumeClick()) {
                 if (mc.gui.screen() == null) {
                     mc.gui.setScreen(FriendsScreen.getInstance());
+                }
+            }
+
+            while (openWardrobeKey.consumeClick()) {
+                if (mc.gui.screen() == null) {
+                    mc.gui.setScreen(WardrobeScreen.getInstance());
                 }
             }
 
@@ -112,6 +132,7 @@ public class MCTunnelClient implements ClientModInitializer {
                 } else {
                     System.out.println("[CraftProxy] Account cleared/offline. Waiting for valid login...");
                     FriendManager.shutdownAndSetOffline();
+                    WardrobeManager.shutdown();
                 }
             }
         });
@@ -137,6 +158,7 @@ public class MCTunnelClient implements ClientModInitializer {
         ClientLifecycleEvents.CLIENT_STOPPING.register(_ -> {
             if (tunnelClient.isConnected()) tunnelClient.disconnect();
             FriendManager.shutdownAndSetOffline();
+            WardrobeManager.shutdown();
             DiscordRPCManager.shutdown();
         });
 
@@ -184,6 +206,9 @@ public class MCTunnelClient implements ClientModInitializer {
     }
 
     private static final Identifier FRIENDS_ICON = Identifier.fromNamespaceAndPath("craftproxy", "textures/gui/icon_friends.png");
+    private static final Identifier WARDROBE_ICON = Identifier.fromNamespaceAndPath("craftproxy", "textures/gui/icon_wardrobe.png");
+    private static final Identifier DISCORD_ICON = Identifier.fromNamespaceAndPath("craftproxy", "textures/gui/icon_discord.png");
+    private static final java.net.URI DISCORD_URI = java.net.URI.create("https://discord.gg/wBj5Jf9pcm");
 
     private static java.util.Optional<net.minecraft.client.gui.components.AbstractWidget> findButtonByText(Screen screen, String text) {
         return Screens.getWidgets(screen).stream()
@@ -204,6 +229,35 @@ public class MCTunnelClient implements ClientModInitializer {
         Screens.getWidgets(screen).add(friendsButton);
 
         ScreenEvents.afterTick(screen).register(_ -> friendsButton.active = apiToken != null);
+    }
+
+    private static void addWardrobeIconButton(Minecraft client, Screen screen, int x, int y) {
+        IconButton wardrobeButton = new IconButton(x, y, 20, WARDROBE_ICON, tr("open_wardrobe_button"), _ -> {
+            if (apiToken != null) {
+                client.gui.setScreen(net.craftproxy.mod.client.screens.WardrobeScreen.getInstance());
+            }
+        });
+
+        wardrobeButton.active = apiToken != null;
+        wardrobeButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(tr("open_wardrobe_button")));
+
+        Screens.getWidgets(screen).add(wardrobeButton);
+
+        ScreenEvents.afterTick(screen).register(_ -> wardrobeButton.active = apiToken != null);
+    }
+
+    private static void addDiscordIconButton(Minecraft client, Screen screen, int x, int y) {
+        IconButton discordButton = new IconButton(
+                x,
+                y,
+                20,
+                DISCORD_ICON,
+                tr("open_discord_button"),
+                net.minecraft.client.gui.screens.ConfirmLinkScreen.confirmLink(screen, DISCORD_URI, false)
+        );
+        discordButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(tr("open_discord_button")));
+
+        Screens.getWidgets(screen).add(discordButton);
     }
 
     public static MCTunnelClient getInstance() {
@@ -247,6 +301,8 @@ public class MCTunnelClient implements ClientModInitializer {
                     apiToken = authData.token;
 
                     FriendManager.init("https://backend.craftproxy.net", apiToken);
+                    net.craftproxy.mod.client.managers.WardrobeManager.init("https://backend.craftproxy.net", apiToken);
+                    net.craftproxy.mod.client.managers.WardrobeManager.getInstance().fetchMyCosmetics();
 
                     System.out.println("[CraftProxy] Successfully authenticated as " + authData.user.name);
 
@@ -256,10 +312,12 @@ public class MCTunnelClient implements ClientModInitializer {
                     System.err.println("[CraftProxy] Auth failed! Status: " + res.status());
                     System.err.println("[CraftProxy] Backend Error: " + res.body());
                     FriendManager.shutdown();
+                    net.craftproxy.mod.client.managers.WardrobeManager.shutdown();
                 }
             } catch (Exception e) {
                 apiToken = null;
                 FriendManager.shutdown();
+                net.craftproxy.mod.client.managers.WardrobeManager.shutdown();
                 e.printStackTrace();
             }
         }).start();
