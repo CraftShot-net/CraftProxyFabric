@@ -38,6 +38,27 @@ loom {
 		// Log in with a real Microsoft account through DevAuth (see README).
 		jvmArguments.add("-Ddevauth.enabled=true")
 		jvmArguments.add("-Ddevauth.account=" + providers.gradleProperty("dev.account").getOrElse("main"))
+		// Endpoint overrides for local development, e.g.
+		//   ./gradlew runActiveClient -Pcraftshot.url=http://localhost:8000
+		listOf(
+			"craftproxy.backend.url",
+			"craftproxy.website.url",
+			"craftshot.url",
+			"craftproxy.mojang.session.url",
+			"craftproxy.mojang.profile.url",
+			"craftproxy.tunnel.host",
+			"craftproxy.discord.url",
+			"craftproxy.discord.rpc.url",
+		).forEach { key ->
+			providers.gradleProperty(key).orNull?.let { jvmArguments.add("-D$key=$it") }
+		}
+		// Trust the local Herd CA for https://*.test backends during development.
+		// Created once in run/ (git-ignored); release builds are unaffected.
+		val herdTruststore = rootProject.layout.projectDirectory.file("run/herd-truststore.p12").asFile
+		if (herdTruststore.exists()) {
+			jvmArguments.add("-Djavax.net.ssl.trustStore=${herdTruststore.absolutePath}")
+			jvmArguments.add("-Djavax.net.ssl.trustStorePassword=changeit")
+		}
 		displayName.set("Fabric Client")
 	}
 	runs.named("server") {

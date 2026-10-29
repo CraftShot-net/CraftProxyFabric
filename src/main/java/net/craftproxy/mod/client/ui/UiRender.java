@@ -167,6 +167,31 @@ public final class UiRender {
         }
     }
 
+    /** Paints the corners of a rectangle with {@code bg}, so a texture drawn there looks rounded. */
+    public static void roundCorners(Gfx g, int x, int y, int w, int h, int r, int bg) {
+        r = clampRadius(w, h, r);
+        int[] corner = CORNERS[r];
+        for (int i = 0; i < r; i++) {
+            int in = corner[i];
+            fill(g, x, y + i, x + in, y + i + 1, bg);
+            fill(g, x + w - in, y + i, x + w, y + i + 1, bg);
+            fill(g, x, y + h - 1 - i, x + in, y + h - i, bg);
+            fill(g, x + w - in, y + h - 1 - i, x + w, y + h - i, bg);
+        }
+    }
+
+    /**
+     * Draws a texture of {@code texW} x {@code texH} pixels into the box, cropped to the box's
+     * aspect ratio around the center (like CSS {@code object-fit: cover}).
+     */
+    public static void imageCover(Gfx g, Identifier texture, int texW, int texH, int x, int y, int w, int h) {
+        int regionW = texW;
+        int regionH = texH;
+        if ((long) texW * h > (long) texH * w) regionW = Math.max(1, Math.round(texH * (float) w / h));
+        else regionH = Math.max(1, Math.round(texW * (float) h / w));
+        g.blit(texture, x, y, (texW - regionW) / 2.0F, (texH - regionH) / 2.0F, w, h, regionW, regionH, texW, texH);
+    }
+
     /** Status dot with a ring in the background color, e.g. on the corner of an avatar. */
     public static void statusDot(Gfx g, int cx, int cy, int size, int color, int ring) {
         int half = size / 2;

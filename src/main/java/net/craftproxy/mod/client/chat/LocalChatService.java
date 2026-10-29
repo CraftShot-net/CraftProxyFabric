@@ -17,6 +17,7 @@ public class LocalChatService implements ChatService {
     private final Map<Integer, List<ChatMessage>> conversations = new ConcurrentHashMap<>();
     private final Map<Integer, Integer> unread = new ConcurrentHashMap<>();
     private final List<Consumer<Integer>> listeners = new CopyOnWriteArrayList<>();
+    private final List<Consumer<ChatMessage>> incomingListeners = new CopyOnWriteArrayList<>();
 
     @Override
     public boolean isConnected() {
@@ -49,7 +50,29 @@ public class LocalChatService implements ChatService {
                 System.currentTimeMillis(), ChatMessage.State.SENT);
         conversations.computeIfAbsent(friendId, id -> new CopyOnWriteArrayList<>()).add(message);
         unread.merge(friendId, 1, Integer::sum);
+        for (Consumer<ChatMessage> listener : incomingListeners) {
+            listener.accept(message);
+        }
         notifyListeners(friendId);
+    }
+
+    @Override
+    public int unreadTotal() {
+        int total = 0;
+        for (int value : unread.values()) {
+            total += value;
+        }
+        return total;
+    }
+
+    @Override
+    public void addIncomingListener(Consumer<ChatMessage> listener) {
+        incomingListeners.add(listener);
+    }
+
+    @Override
+    public void removeIncomingListener(Consumer<ChatMessage> listener) {
+        incomingListeners.remove(listener);
     }
 
     @Override

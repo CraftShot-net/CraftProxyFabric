@@ -43,6 +43,7 @@ replay_*.log
 .env
 .kotlin
 .cache/
+versions/
 !.idea/
 .idea/*
 !.idea/runConfigurations

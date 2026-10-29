@@ -1,5 +1,6 @@
 package net.craftproxy.mod.client.managers;
 
+import net.craftproxy.mod.client.MCTunnelClient;
 import net.craftproxy.mod.client.gui.WorldInviteToast;
 import net.craftproxy.mod.client.utils.HttpUtils;
 import net.craftproxy.mod.client.utils.SkinManager;
@@ -16,7 +17,10 @@ import java.util.function.Consumer;
 public class FriendManager {
 
     private static FriendManager instance;
-    private final HttpUtils api;
+    /** CraftProxy backend: Minecraft-specific endpoints (world invites). */
+    private final HttpUtils proxyApi;
+    /** CraftShot social core: friends and presence. */
+    private final HttpUtils socialApi;
 
     // --- DTOs ---
     public record UserDto(int id, String name, String minecraft_uuid) {}
@@ -45,15 +49,17 @@ public class FriendManager {
     private static final long FOREGROUND_POLL_SECONDS = 4;
     private volatile boolean screenOpen = false;
 
-    public FriendManager(String baseUrl, String token) {
-        this.api = new HttpUtils(baseUrl).authToken(token);
+    public FriendManager(String proxyBaseUrl, String proxyToken, String socialBaseUrl, String socialToken) {
+        this.proxyApi = new HttpUtils(proxyBaseUrl).authToken(proxyToken);
+        this.socialApi = new HttpUtils(socialBaseUrl).authToken(socialToken)
+                .onUnauthorized(MCTunnelClient::onCraftshotUnauthorized);
     }
 
-    public static void init(String baseUrl, String token) {
+    public static void init(String proxyBaseUrl, String proxyToken, String socialBaseUrl, String socialToken) {
         if (instance != null) {
             instance.stopPolling();
         }
-        instance = new FriendManager(baseUrl, token);
+        instance = new FriendManager(proxyBaseUrl, proxyToken, socialBaseUrl, socialToken);
         instance.startPolling();
     }
 
@@ -63,7 +69,7 @@ public class FriendManager {
 
     public static FriendManager getInstance() {
         if (instance == null) {
-            throw new IllegalStateException("FriendManager not initialized. Call FriendManager.init(baseUrl, token) first.");
+            throw new IllegalStateException("FriendManager not initialized. Call FriendManager.init(...) first.");
         }
         return instance;
     }
@@ -95,6 +101,21 @@ public class FriendManager {
         this.screenOpen = open;
         if (open) forceRefresh();
         restartPollingWithCurrentInterval();
+    }
+
+    /** Whether the social screen is currently open (used to suppress message toasts). */
+    public boolean isScreenOpen() {
+        return screenOpen;
+    }
+
+    /** Display name for a friend id, or {@code "?"} when the list has not loaded yet. */
+    public String nameForId(int id) {
+        for (UserDto friend : cachedFriends) {
+            if (friend.id() == id) {
+                return friend.name();
+            }
+        }
+        return "?";
     }
 
     private void restartPollingWithCurrentInterval() {
@@ -175,7 +196,7 @@ public class FriendManager {
     private void pollOnce() {
         // Friends
         try {
-            HttpUtils.Response friendsRes = api.get("/api/friends");
+            HttpUtils.Response friendsRes = socialApi.get("/api/v2/friends");
             if (friendsRes.isSuccessful()) {
                 List<UserDto> fresh = friendsRes.as(FriendsListResponse.class).friends();
                 cachedFriends.clear();
@@ -186,7 +207,7 @@ public class FriendManager {
 
         // Pending Requests
         try {
-            HttpUtils.Response pendingRes = api.get("/api/friends/pending");
+            HttpUtils.Response pendingRes = socialApi.get("/api/v2/friends/pending");
             if (pendingRes.isSuccessful()) {
                 List<UserDto> fresh = pendingRes.as(PendingListResponse.class).pending_requests();
                 cachedPending.clear();
@@ -198,7 +219,7 @@ public class FriendManager {
         }
 
         try {
-            HttpUtils.Response invitesRes = api.get("/api/world-invites");
+            HttpUtils.Response invitesRes = proxyApi.get("/api/world-invites");
             if (invitesRes.isSuccessful()) {
                 List<WorldInviteDto> fresh = visibleWorldInvites(invitesRes.as(WorldInvitesListResponse.class).invites());
                 cachedWorldInvites.clear();
@@ -268,11 +289,11 @@ public class FriendManager {
         ));
     }
 
-    public CompletableFuture<Boolean> sendWorldInvite(String friendName, String worldName, String ipAddress) {
+    public CompletableFuture<Boolean> sendWorldInvite(String friendName, String friendUuid, String worldName, String ipAddress) {
         return CompletableFuture.supplyAsync(() -> {
-            record InvitePayload(String worldName, String ip) {}
+            record InvitePayload(String worldName, String ip, String uuid) {}
 
-            HttpUtils.Response res = api.post("/api/world-invites/send/" + friendName, new InvitePayload(worldName, ipAddress));
+            HttpUtils.Response res = proxyApi.post("/api/world-invites/send/" + friendName, new InvitePayload(worldName, ipAddress, friendUuid));
             return res.isSuccessful();
         });
     }
@@ -281,7 +302,7 @@ public class FriendManager {
     public void clearWorldInvites() {
         CompletableFuture.supplyAsync(() -> {
 
-            HttpUtils.Response res = api.post("/api/world-invites/clear", new Object());
+            HttpUtils.Response res = proxyApi.post("/api/world-invites/clear", new Object());
             return res.isSuccessful();
         });
     }
@@ -289,7 +310,7 @@ public class FriendManager {
     // --- API Calls (CompletableFutures) ---
     public CompletableFuture<List<UserDto>> getFriends() {
         return CompletableFuture.supplyAsync(() -> {
-            HttpUtils.Response res = api.get("/api/friends");
+            HttpUtils.Response res = socialApi.get("/api/v2/friends");
             if (res.isSuccessful()) {
                 List<UserDto> fresh = res.as(FriendsListResponse.class).friends();
                 cachedFriends.clear();
@@ -303,7 +324,7 @@ public class FriendManager {
 
     public CompletableFuture<List<UserDto>> getPendingRequests() {
         return CompletableFuture.supplyAsync(() -> {
-            HttpUtils.Response res = api.get("/api/friends/pending");
+            HttpUtils.Response res = socialApi.get("/api/v2/friends/pending");
             if (res.isSuccessful()) {
                 List<UserDto> fresh = res.as(PendingListResponse.class).pending_requests();
                 cachedPending.clear();
@@ -317,7 +338,7 @@ public class FriendManager {
 
     public CompletableFuture<List<WorldInviteDto>> getWorldInvites() {
         return CompletableFuture.supplyAsync(() -> {
-            HttpUtils.Response res = api.get("/api/world-invites"); // <--- Endpunkt ggf. anpassen
+            HttpUtils.Response res = proxyApi.get("/api/world-invites"); // <--- Endpunkt ggf. anpassen
             if (res.isSuccessful()) {
                 List<WorldInviteDto> fresh = visibleWorldInvites(res.as(WorldInvitesListResponse.class).invites());
                 cachedWorldInvites.clear();
@@ -331,13 +352,13 @@ public class FriendManager {
 
     public CompletableFuture<Boolean> sendRequestByName(String username) {
         return CompletableFuture.supplyAsync(() -> {
-            HttpUtils.Response res = api.post("/api/friends/request/" + username, new Object());
+            HttpUtils.Response res = socialApi.post("/api/v2/friends/request/" + username, new Object());
             return res.isSuccessful();
         });
     }
 
     public CompletableFuture<Boolean> acceptRequest(int senderId) {
-        return CompletableFuture.supplyAsync(() -> api.post("/api/friends/accept/" + senderId, new Object()).isSuccessful())
+        return CompletableFuture.supplyAsync(() -> socialApi.post("/api/v2/friends/accept/" + senderId, new Object()).isSuccessful())
                 .thenApply(success -> {
                     if (success) forceRefresh();
                     return success;
@@ -345,7 +366,7 @@ public class FriendManager {
     }
 
     public CompletableFuture<Boolean> declineRequest(int senderId) {
-        return CompletableFuture.supplyAsync(() -> api.post("/api/friends/decline/" + senderId, new Object()).isSuccessful())
+        return CompletableFuture.supplyAsync(() -> socialApi.post("/api/v2/friends/decline/" + senderId, new Object()).isSuccessful())
                 .thenApply(success -> {
                     if (success) forceRefresh();
                     return success;
@@ -353,7 +374,7 @@ public class FriendManager {
     }
 
     public CompletableFuture<Boolean> removeFriend(int friendId) {
-        return CompletableFuture.supplyAsync(() -> api.delete("/api/friends/" + friendId).isSuccessful())
+        return CompletableFuture.supplyAsync(() -> socialApi.delete("/api/v2/friends/" + friendId).isSuccessful())
                 .thenApply(success -> {
                     if (success) forceRefresh();
                     return success;
@@ -363,7 +384,7 @@ public class FriendManager {
     // --- Status Calls ---
     public CompletableFuture<IngameStatusResponse> getIngameOnlineStatus(String username) {
         return CompletableFuture.supplyAsync(() -> {
-            HttpUtils.Response res = api.get("/api/mod-status/" + username);
+            HttpUtils.Response res = socialApi.get("/api/v2/mod-status/" + username);
             if (res.isSuccessful()) {
                 return res.as(IngameStatusResponse.class);
             }
@@ -371,15 +392,25 @@ public class FriendManager {
         });
     }
 
+    // Presence goes to both backends: CraftShot for new mod versions and the website, CraftProxy
+    // so friends on old mod versions still see us online (and our world invites get cleaned up).
+
     public void setIngameOnline() {
-        CompletableFuture.supplyAsync(() -> api.post("/api/mod-status/online", new Object()).isSuccessful());
+        reportPresence("online");
     }
 
     public void sendHeartbeat() {
-        CompletableFuture.supplyAsync(() -> api.post("/api/mod-status/heartbeat", new Object()).isSuccessful());
+        reportPresence("heartbeat");
     }
 
     public CompletableFuture<Boolean> setIngameOffline() {
-        return CompletableFuture.supplyAsync(() -> api.post("/api/mod-status/offline", new Object()).isSuccessful());
+        return reportPresence("offline");
+    }
+
+    /** Completes with whether CraftShot accepted the update; the CraftProxy call is best effort. */
+    private CompletableFuture<Boolean> reportPresence(String state) {
+        CompletableFuture<Void> legacy = CompletableFuture.runAsync(() -> proxyApi.post("/api/mod-status/" + state, new Object()));
+        CompletableFuture<Boolean> social = CompletableFuture.supplyAsync(() -> socialApi.post("/api/v2/mod-status/" + state, new Object()).isSuccessful());
+        return legacy.exceptionally(ex -> null).thenCombine(social, (ignored, success) -> success);
     }
 }

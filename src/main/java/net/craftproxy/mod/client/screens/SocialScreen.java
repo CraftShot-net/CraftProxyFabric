@@ -2,11 +2,18 @@ package net.craftproxy.mod.client.screens;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import net.craftproxy.mod.CraftProxy;
+import net.craftproxy.mod.client.MCTunnelClient;
+import net.craftproxy.mod.client.chat.ChatAttachment;
 import net.craftproxy.mod.client.chat.ChatMessage;
+import net.craftproxy.mod.client.chat.ChatSendException;
 import net.craftproxy.mod.client.chat.ChatService;
 import net.craftproxy.mod.client.chat.ChatServices;
 import net.craftproxy.mod.client.compat.ClientCompat;
+import net.craftproxy.mod.client.compat.FileDialogs;
 import net.craftproxy.mod.client.compat.Gfx;
+import net.craftproxy.mod.client.images.ChatImages;
+import net.craftproxy.mod.client.images.ClipboardImages;
+import net.craftproxy.mod.client.images.ImageCodec;
 import net.craftproxy.mod.client.managers.FriendManager;
 import net.craftproxy.mod.client.managers.FriendManager.UserDto;
 import net.craftproxy.mod.client.managers.FriendManager.WorldInviteDto;
@@ -15,6 +22,7 @@ import net.craftproxy.mod.client.ui.Anim;
 import net.craftproxy.mod.client.ui.ContextMenu;
 import net.craftproxy.mod.client.ui.Hits;
 import net.craftproxy.mod.client.ui.Icon;
+import net.craftproxy.mod.client.ui.ImageViewer;
 import net.craftproxy.mod.client.ui.ScrollArea;
 import net.craftproxy.mod.client.ui.Theme;
 import net.craftproxy.mod.client.ui.UiButton;
@@ -29,10 +37,16 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.util.Mth;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.time.format.FormatStyle;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -42,6 +56,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
@@ -64,6 +79,15 @@ public class SocialScreen extends UiScreen {
         return INSTANCE;
     }
 
+    /** Opens the social screen with the conversation with {@code friendId} selected (toast click). */
+    public static void openChat(int friendId) {
+        SocialScreen screen = getInstance();
+        if (ClientCompat.currentScreen() != screen) {
+            ClientCompat.setScreen(screen);
+        }
+        screen.openConversation(friendId);
+    }
+
     // --- Layout constants ---
     private static final int SECTION_H = 18;
     private static final int FRIEND_H = 26;
@@ -72,6 +96,14 @@ public class SocialScreen extends UiScreen {
     private static final int ADD_H = 58;
     private static final int CHAT_HEADER_H = 36;
     private static final int COMPOSER_H = 20;
+    private static final int ATTACH_STRIP_H = 38;
+    private static final int ATTACH_TILE = 32;
+    /** Largest single image preview in a message; several images become square tiles. */
+    private static final int THUMB_MAX_W = 150;
+    private static final int THUMB_MAX_H = 110;
+    private static final int TILE = 54;
+    /** Files larger than this are not even read (the upload limit is far lower). */
+    private static final long MAX_IMAGE_FILE_BYTES = 64L * 1024 * 1024;
     private static final long GROUP_WINDOW_MS = 3 * 60 * 1000L;
     private static final long STATUS_REFRESH_INTERVAL_MS = 5000L;
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
@@ -81,6 +113,7 @@ public class SocialScreen extends UiScreen {
     private final List<UserDto> requests = new CopyOnWriteArrayList<>();
     private final List<WorldInviteDto> worldInvites = new CopyOnWriteArrayList<>();
     private final Map<String, Boolean> onlineStatusByName = new ConcurrentHashMap<>();
+    private final Map<String, String> lastSeenByName = new ConcurrentHashMap<>();
     private final Map<String, Long> statusFetchAtMillis = new ConcurrentHashMap<>();
     private final Set<String> inFlightStatusFetches = ConcurrentHashMap.newKeySet();
 
@@ -97,6 +130,13 @@ public class SocialScreen extends UiScreen {
     private int lastMessageCount = -1;
     private final Set<String> collapsedSections = new HashSet<>();
     private final Map<Integer, String> drafts = new HashMap<>();
+    // Images waiting for the next message, per conversation like the drafts.
+    private final Map<Integer, List<ChatAttachment>> pendingImages = new HashMap<>();
+    private int preparingImages;
+    private boolean uploading;
+    private int lastContentH = -1;
+    private ImageViewer viewer;
+    private boolean composerHasImageButton;
 
     // --- Layout ---
     private int wx, wy, ww, wh, sideW;
@@ -108,6 +148,7 @@ public class SocialScreen extends UiScreen {
     private UiButton closeButton;
     private UiButton addButton;
     private UiButton sendButton;
+    private UiButton imageButton;
     private UiButton inviteButton;
     private UiButton moreButton;
     private final ScrollArea listScroll = new ScrollArea();
@@ -171,7 +212,11 @@ public class SocialScreen extends UiScreen {
                     return findFriend(name) != null ? trs("add.tooltip_open", name) : trs("add.tooltip_name", name);
                 });
         sendButton = UiButton.icon(Icon.SEND, UiButton.Style.PRIMARY, trs("chat.send"), this::sendChatMessage)
-                .enabledWhen(() -> !chatField.getValue().isBlank());
+                .enabledWhen(() -> !uploading && preparingImages == 0
+                        && (!chatField.getValue().isBlank() || !pending().isEmpty()));
+        imageButton = UiButton.icon(Icon.IMAGE, UiButton.Style.GHOST, null, this::pickImages)
+                .enabledWhen(() -> !uploading && pending().size() < chat().maxImages())
+                .tooltip(() -> trs("chat.attach.tooltip"));
         inviteButton = new UiButton(tr("invite.button"), Icon.WORLD, UiButton.Style.PRIMARY, () -> {
             UserDto friend = selectedFriend();
             if (friend != null) inviteFriend(friend);
@@ -209,7 +254,10 @@ public class SocialScreen extends UiScreen {
         int inviteW = UiButton.widthFor(this.font, tr("invite.button"), Icon.WORLD);
         inviteButton.bounds(moreButton.x - 4 - inviteW, headerBottom + 9, inviteW, 18);
         int composerY = wy + wh - COMPOSER_H - 10;
-        chatField.setBounds(px + 10, composerY, pw - 20 - 26, COMPOSER_H);
+        composerHasImageButton = chat().supportsImages();
+        int fieldX = px + 10 + (composerHasImageButton ? 24 : 0);
+        imageButton.bounds(px + 10, composerY, 20, COMPOSER_H);
+        chatField.setBounds(fieldX, composerY, px + pw - 10 - 26 - fieldX, COMPOSER_H);
         sendButton.bounds(px + pw - 10 - 22, composerY, 22, COMPOSER_H);
     }
 
@@ -282,6 +330,7 @@ public class SocialScreen extends UiScreen {
             refreshOnlineStatus(friend.name(), true);
         }
         onlineStatusByName.keySet().removeIf(name -> !validNames.contains(name));
+        lastSeenByName.keySet().removeIf(name -> !validNames.contains(name));
         statusFetchAtMillis.keySet().removeIf(name -> !validNames.contains(name));
         inFlightStatusFetches.removeIf(name -> !validNames.contains(name));
     }
@@ -296,13 +345,56 @@ public class SocialScreen extends UiScreen {
 
         statusFetchAtMillis.put(username, now);
         manager.getIngameOnlineStatus(username)
-                .thenAccept(status -> this.minecraft.execute(() -> onlineStatusByName.put(username, status.is_ingame_online())))
+                .thenAccept(status -> this.minecraft.execute(() -> {
+                    onlineStatusByName.put(username, status.is_ingame_online());
+                    String lastSeen = status.last_seen();
+                    if (lastSeen != null) lastSeenByName.put(username, lastSeen);
+                }))
                 .exceptionally(ex -> null)
                 .whenComplete((result, error) -> inFlightStatusFetches.remove(username));
     }
 
     private boolean isOnline(String name) {
         return onlineStatusByName.getOrDefault(name, false);
+    }
+
+    /** Localized "last online" text for an offline friend, or {@code null} when unknown. */
+    private String lastSeenText(String name) {
+        String raw = lastSeenByName.get(name);
+        if (raw == null || raw.isBlank()) return null;
+        Instant seen = parseLastSeen(raw);
+        if (seen == null) return raw; // Backend already sent a display string; show it verbatim.
+
+        long minutes = Duration.between(seen, Instant.now()).toMinutes();
+        if (minutes < 1) return trs("status.last_online.just_now");
+        if (minutes < 60) return trs(minutes == 1 ? "status.last_online.minutes.one" : "status.last_online.minutes", minutes);
+        long hours = minutes / 60;
+        if (hours < 24) return trs(hours == 1 ? "status.last_online.hours.one" : "status.last_online.hours", hours);
+        long days = hours / 24;
+        if (days == 1) return trs("status.last_online.yesterday");
+        if (days < 7) return trs("status.last_online.days", days);
+        return trs("status.last_online.date",
+                LocalDate.ofInstant(seen, ZoneId.systemDefault()).format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)));
+    }
+
+    /** Parses the backend's {@code last_seen} value; tolerant of ISO-8601 and epoch (s/ms) formats. */
+    private static Instant parseLastSeen(String raw) {
+        String s = raw.trim();
+        if (s.isEmpty()) return null;
+        try {
+            return Instant.parse(s);
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            long value = Long.parseLong(s);
+            return value > 10_000_000_000L ? Instant.ofEpochMilli(value) : Instant.ofEpochSecond(value);
+        } catch (NumberFormatException ignored) {
+        }
+        try {
+            return LocalDateTime.parse(s).atZone(ZoneId.systemDefault()).toInstant();
+        } catch (DateTimeParseException ignored) {
+        }
+        return null;
     }
 
     private UserDto selectedFriend() {
@@ -420,17 +512,174 @@ public class SocialScreen extends UiScreen {
         this.setFocused(chatField.box);
     }
 
+    /** Selects the conversation with {@code friendId}, even if the list has not arrived yet. */
+    private void openConversation(int friendId) {
+        if (chatField == null) {
+            return;
+        }
+        for (UserDto friend : friends) {
+            if (friend.id() == friendId) {
+                selectFriend(friend);
+                return;
+            }
+        }
+        selectedFriendId = friendId;
+        chatField.setVisible(true);
+        chatField.setValue(drafts.getOrDefault(friendId, ""));
+        chat().markRead(friendId);
+        scrollChatToBottom = true;
+        lastMessageCount = -1;
+        chatAppear.set(0.0F);
+    }
+
     private void sendChatMessage() {
         UserDto friend = selectedFriend();
         String text = chatField.getValue().strip();
-        if (friend == null || text.isEmpty()) return;
-        chatField.setValue("");
-        drafts.remove(friend.id());
+        List<ChatAttachment> images = List.copyOf(pending());
+        if (friend == null || uploading || preparingImages > 0 || (text.isEmpty() && images.isEmpty())) return;
         scrollChatToBottom = true;
-        chat().send(friend.id(), text).exceptionally(ex -> {
-            this.minecraft.execute(() -> showNotice(tr("notice.message_failed"), Icon.CLOSE, Theme.DANGER));
-            return null;
+        if (images.isEmpty()) {
+            chatField.setValue("");
+            drafts.remove(friend.id());
+            chat().send(friend.id(), text).exceptionally(ex -> {
+                this.minecraft.execute(() -> {
+                    scrollChatToBottom = false;
+                    showSendFailure(ChatSendException.reasonOf(ex), false);
+                });
+                return null;
+            });
+            return;
+        }
+
+        // Uploads take a moment: keep text and images in the composer until the server accepted them,
+        // so a failed upload can simply be sent again.
+        int friendId = friend.id();
+        uploading = true;
+        chat().send(friendId, text, images).whenComplete((message, error) -> this.minecraft.execute(() -> {
+            uploading = false;
+            if (error != null) {
+                scrollChatToBottom = false;
+                showSendFailure(ChatSendException.reasonOf(error), true);
+                return;
+            }
+            List<ChatAttachment> left = pendingImages.get(friendId);
+            if (left != null) left.removeAll(images);
+            images.forEach(image -> ChatImages.forget(image.id()));
+            if (friendId == selectedFriendId) {
+                if (chatField.getValue().strip().equals(text)) chatField.setValue("");
+            } else if (text.equals(drafts.getOrDefault(friendId, "").strip())) {
+                drafts.remove(friendId);
+            }
+        }));
+    }
+
+    private void showSendFailure(ChatSendException.Reason reason, boolean upload) {
+        Component text = switch (reason) {
+            case TOO_LARGE -> tr("notice.image_too_large", maxImageMegabytes());
+            case UNSUPPORTED -> tr("notice.image_unsupported");
+            case RATE_LIMITED -> tr("notice.rate_limited");
+            case FORBIDDEN -> tr("notice.message_forbidden");
+            case FAILED -> tr(upload ? "notice.upload_failed" : "notice.message_failed");
+        };
+        showNotice(text, Icon.CLOSE, Theme.DANGER);
+    }
+
+    private int maxImageMegabytes() {
+        return Math.max(1, chat().maxImageBytes() / (1024 * 1024));
+    }
+
+    // --- Image attachments ---
+
+    /** Pending images of the open conversation (an empty, detached list when none is open). */
+    private List<ChatAttachment> pending() {
+        if (selectedFriendId < 0) return new ArrayList<>();
+        return pendingImages.computeIfAbsent(selectedFriendId, id -> new ArrayList<>());
+    }
+
+    private boolean canAttachImages() {
+        return chat().supportsImages() && selectedFriend() != null && !uploading;
+    }
+
+    private void pickImages() {
+        if (!canAttachImages()) return;
+        int friendId = selectedFriendId;
+        FileDialogs.openImages(trs("chat.attach.title"), trs("chat.attach.filter"), paths -> {
+            if (!paths.isEmpty()) this.minecraft.execute(() -> addImageFiles(friendId, paths));
         });
+    }
+
+    private void addImageFiles(int friendId, List<Path> paths) {
+        addImages(friendId, CompletableFuture.supplyAsync(() -> {
+            List<byte[]> files = new ArrayList<>();
+            for (Path path : paths) {
+                try {
+                    if (!Files.isRegularFile(path)) continue;
+                    if (Files.size(path) > MAX_IMAGE_FILE_BYTES) {
+                        throw new ChatSendException(ChatSendException.Reason.TOO_LARGE, "File too large");
+                    }
+                    files.add(Files.readAllBytes(path));
+                } catch (IOException e) {
+                    System.out.println("[CraftProxy] Could not read " + path + ": " + e.getMessage());
+                }
+            }
+            return files;
+        }), null);
+    }
+
+    /** Result of turning raw image bytes into attachments off the render thread. */
+    private record Prepared(List<ChatAttachment> images, ChatSendException.Reason error) {
+    }
+
+    /**
+     * Converts the raw images into upload-ready attachments in the background and adds them to the
+     * conversation. When nothing came out and {@code fallbackText} is set, it is pasted instead.
+     */
+    private void addImages(int friendId, CompletableFuture<List<byte[]>> source, String fallbackText) {
+        int maxBytes = chat().maxImageBytes();
+        preparingImages++;
+        source.thenApply(raw -> {
+            List<ChatAttachment> images = new ArrayList<>();
+            ChatSendException.Reason error = null;
+            for (byte[] data : raw) {
+                try {
+                    images.add(ImageCodec.prepareUpload(data, maxBytes));
+                } catch (ChatSendException e) {
+                    if (error == null) error = e.reason();
+                }
+            }
+            return new Prepared(images, error);
+        }).whenComplete((prepared, failure) -> this.minecraft.execute(() -> {
+            preparingImages--;
+            if (failure != null) {
+                showSendFailure(ChatSendException.reasonOf(failure), true);
+                return;
+            }
+            if (prepared.images().isEmpty() && prepared.error() == null) {
+                if (fallbackText != null && !fallbackText.isEmpty() && friendId == selectedFriendId) {
+                    chatField.box.insertText(fallbackText);
+                }
+                return;
+            }
+            List<ChatAttachment> list = pendingImages.computeIfAbsent(friendId, id -> new ArrayList<>());
+            int room = Math.max(0, chat().maxImages() - list.size());
+            list.addAll(prepared.images().subList(0, Math.min(room, prepared.images().size())));
+            if (prepared.images().size() > room) {
+                showNotice(tr("notice.image_limit", chat().maxImages()), Icon.IMAGE, Theme.WARNING);
+            } else if (prepared.error() != null) {
+                showSendFailure(prepared.error(), true);
+            }
+            if (friendId == selectedFriendId) this.setFocused(chatField.box);
+        }));
+    }
+
+    private void removePendingImage(ChatAttachment image) {
+        pending().remove(image);
+        ChatImages.forget(image.id());
+    }
+
+    private void openViewer(List<String> urls, int index) {
+        viewer = new ImageViewer(urls, index, this::copyToClipboard, url -> ClientCompat.openLink(this, url));
+        this.setFocused(null);
     }
 
     /** Why a world invite to {@code friend} is not possible right now, or {@code null}. */
@@ -445,7 +694,7 @@ public class SocialScreen extends UiScreen {
         if (inviteBlockReason(friend) != null) return;
         String name = friend.name();
         showNotice(tr("notice.invite_sending", name), Icon.WORLD, Theme.ACCENT);
-        WorldInvites.sendInvite(name, success -> this.minecraft.execute(() -> {
+        WorldInvites.sendInvite(name, friend.minecraft_uuid(), success -> this.minecraft.execute(() -> {
             if (success) showNotice(tr("notice.invite_sent", name), Icon.CHECK, Theme.SUCCESS);
             else showNotice(tr("notice.invite_failed", name), Icon.CLOSE, Theme.DANGER);
         }));
@@ -498,6 +747,14 @@ public class SocialScreen extends UiScreen {
         }
     }
 
+    /** Hides an invite locally; the host is not notified. */
+    private void dismissInvite(WorldInviteDto invite) {
+        FriendManager manager = friendManager();
+        if (manager == null) return;
+        manager.dismissWorldInvite(invite);
+        showNotice(tr("notice.invite_dismissed", invite.hostName()), Icon.CLOSE, Theme.TEXT_SECONDARY);
+    }
+
     private void copyToClipboard(String text) {
         this.minecraft.keyboardHandler.setClipboard(text);
         showNotice(tr("notice.copied"), Icon.COPY, Theme.ACCENT);
@@ -528,7 +785,9 @@ public class SocialScreen extends UiScreen {
         openContextMenu(new ContextMenu()
                 .header(invite.worldName())
                 .add(trs("menu.join"), Icon.PLAY, () -> joinInvite(invite))
-                .add(trs("menu.copy_address"), Icon.COPY, () -> copyToClipboard(invite.tunnel_ip())), x, y);
+                .add(trs("menu.copy_address"), Icon.COPY, () -> copyToClipboard(invite.tunnel_ip()))
+                .separator()
+                .danger(trs("menu.decline_invite"), Icon.CLOSE, () -> dismissInvite(invite)), x, y);
     }
 
     // =====================================================================================
@@ -609,7 +868,7 @@ public class SocialScreen extends UiScreen {
 
     private List<Row> buildRows() {
         List<Row> rows = new ArrayList<>();
-        if (friendManager() == null) {
+        if (friendManager() == null || MCTunnelClient.craftshotToken == null) {
             rows.add(new Row(RowKind.EMPTY, "offline", trs("empty.not_connected"), 0, 0, null, null));
             return rows;
         }
@@ -626,9 +885,14 @@ public class SocialScreen extends UiScreen {
             if (!matches(friend.name(), q)) continue;
             (isOnline(friend.name()) ? online : offline).add(friend);
         }
-        Comparator<UserDto> byName = Comparator.comparing(u -> u.name().toLowerCase(Locale.ROOT));
-        online.sort(byName);
-        offline.sort(byName);
+        // Most recent conversation first, like a messenger; friends without messages by name.
+        ChatService chat = chat();
+        Comparator<UserDto> byRecent = Comparator
+                .comparingLong((UserDto friend) -> chat.lastActivity(friend.id()))
+                .reversed()
+                .thenComparing(friend -> friend.name().toLowerCase(Locale.ROOT));
+        online.sort(byRecent);
+        offline.sort(byRecent);
 
         section(rows, "invites", trs("section.invites"), invites.size(), Theme.ACCENT, () -> {
             for (WorldInviteDto invite : invites) rows.add(new Row(RowKind.INVITE, null, null, 0, 0, null, invite));
@@ -745,16 +1009,19 @@ public class SocialScreen extends UiScreen {
         int textW = w - 30 - 4 - badgeSpace;
         UiRender.text(g, this.font, UiRender.ellipsize(this.font, friend.name(), textW), textX, y + 4, online || selected ? Theme.TEXT : Theme.TEXT_SECONDARY);
 
-        List<ChatMessage> history = chat().history(friend.id());
+        ChatMessage last = chat().lastMessage(friend.id());
         String sub;
         int subColor;
-        if (!history.isEmpty()) {
-            ChatMessage last = history.get(history.size() - 1);
-            sub = (last.outgoing() ? trs("chat.you_prefix") : "") + last.text();
+        if (last != null) {
+            sub = (last.outgoing() ? trs("chat.you_prefix") : "") + last.previewText();
             subColor = unread > 0 ? Theme.TEXT_SECONDARY : Theme.TEXT_MUTED;
+        } else if (online) {
+            sub = trs("status.online");
+            subColor = Theme.mix(Theme.ONLINE, Theme.TEXT_MUTED, 0.35F);
         } else {
-            sub = trs(online ? "status.online" : "status.offline");
-            subColor = online ? Theme.mix(Theme.ONLINE, Theme.TEXT_MUTED, 0.35F) : Theme.TEXT_MUTED;
+            String seen = lastSeenText(friend.name());
+            sub = seen != null ? seen : trs("status.offline");
+            subColor = Theme.TEXT_MUTED;
         }
         UiRender.text(g, this.font, UiRender.ellipsize(this.font, sub, textW), textX, y + 14, subColor);
         UiRender.countBadge(g, this.font, unread, x + w - 5, y + 9);
@@ -869,8 +1136,11 @@ public class SocialScreen extends UiScreen {
         UserDto friend = selectedFriend();
 
         boolean hasFriend = friend != null;
+        // The chat service changes after login; the image button comes and goes with it.
+        if (composerHasImageButton != chat().supportsImages()) layoutWidgets();
         chatField.setVisible(hasFriend);
         sendButton.visible = hasFriend;
+        imageButton.visible = hasFriend && composerHasImageButton;
         inviteButton.visible = hasFriend;
         moreButton.visible = hasFriend;
 
@@ -891,8 +1161,18 @@ public class SocialScreen extends UiScreen {
         UiRender.statusDot(g, px + 30, ay + 20, 6, online ? Theme.ONLINE : Theme.OFFLINE, Theme.WINDOW);
         Component name = Component.literal(friend.name()).withStyle(s -> s.withBold(true));
         UiRender.text(g, this.font, name, px + 40, ay + 2, Theme.TEXT);
-        UiRender.text(g, this.font, trs(online ? "status.online" : "status.offline"), px + 40, ay + 13,
-                online ? Theme.ONLINE : Theme.TEXT_MUTED);
+        String statusText;
+        int statusColor;
+        if (online) {
+            statusText = trs("status.online");
+            statusColor = Theme.ONLINE;
+        } else {
+            String seen = lastSeenText(friend.name());
+            statusText = seen != null ? trs("status.offline_last_seen", seen) : trs("status.offline");
+            statusColor = Theme.TEXT_MUTED;
+        }
+        int statusMaxW = Math.max(10, inviteButton.x - (px + 40) - 6);
+        UiRender.text(g, this.font, UiRender.ellipsize(this.font, statusText, statusMaxW), px + 40, ay + 13, statusColor);
         hits.add(px + 6, ay - 3, 40 + this.font.width(name), 28, null, (cx, cy) -> openFriendMenu(friend, cx, cy));
         drawButton(g, inviteButton, mx, my);
         drawButton(g, moreButton, mx, my);
@@ -917,21 +1197,28 @@ public class SocialScreen extends UiScreen {
 
         // Messages
         int composerY = chatField.y;
-        chatScroll.setBounds(px + 4, messagesTop, pw - 8, composerY - 6 - messagesTop);
+        List<ChatAttachment> attachments = pending();
+        boolean showStrip = !attachments.isEmpty() || preparingImages > 0;
+        int messagesBottom = composerY - 6 - (showStrip ? ATTACH_STRIP_H : 0);
+        // Capture the old position before new bounds or taller content change maxScroll().
+        boolean wasAtBottom = chatScroll.isAtBottom();
+        chatScroll.setBounds(px + 4, messagesTop, pw - 8, messagesBottom - messagesTop);
         List<ChatMessage> history = chat().history(friend.id());
         List<ChatItem> items = layoutMessages(history, chatScroll.w - 16);
         int contentH = items.isEmpty() ? 0 : items.get(items.size() - 1).y() + items.get(items.size() - 1).h() + 10;
         chatScroll.setContentHeight(contentH);
         if (history.size() != lastMessageCount) {
-            if (scrollChatToBottom || chatScroll.isAtBottom() || lastMessageCount < 0) {
+            if (scrollChatToBottom || wasAtBottom || lastMessageCount < 0) {
                 chatScroll.scrollToBottom(lastMessageCount < 0);
             }
             lastMessageCount = history.size();
-        }
-        if (scrollChatToBottom) {
-            chatScroll.scrollToBottom(false);
+            // Only consume the request once the new message is actually in the list.
             scrollChatToBottom = false;
+        } else if (wasAtBottom && contentH != lastContentH) {
+            // A loaded image changed the height of its message: stay glued to the newest message.
+            chatScroll.scrollToBottom(true);
         }
+        lastContentH = contentH;
         chatScroll.update();
 
         if (history.isEmpty()) {
@@ -945,20 +1232,82 @@ public class SocialScreen extends UiScreen {
             int left = chatScroll.x + 6;
             int right = chatScroll.x + chatScroll.w - 8;
             int baseY = chatScroll.y + 6 - chatScroll.offset();
+            boolean inChat = chatScroll.contains(mx, my);
             for (ChatItem item : items) {
                 int iy = baseY + item.y();
                 if (iy + item.h() < chatScroll.y || iy > chatScroll.y + chatScroll.h) continue;
                 if (item.day() != null) drawDaySeparator(g, item.day(), left, right, iy);
-                else drawBubble(g, item, left, right, iy);
+                else drawBubble(g, item, left, right, iy, inChat, mx, my);
             }
             hits.clearClip();
             chatScroll.end(g, mx, my);
         }
 
         // Composer
+        if (showStrip) drawAttachmentStrip(g, attachments, px + 10, messagesBottom + 3, mx, my);
+        sendButton.loading = uploading;
         chatField.draw(g, mx, my);
+        if (imageButton.visible) drawButton(g, imageButton, mx, my);
         drawButton(g, sendButton, mx, my);
         UiRender.alpha = saved;
+    }
+
+    private int guiScale() {
+        return Math.max(1, (int) Math.ceil(this.minecraft.getWindow().getGuiScale()));
+    }
+
+    /** Pending images above the input: small tiles with a remove button, spinners while preparing. */
+    private void drawAttachmentStrip(Gfx g, List<ChatAttachment> attachments, int x, int y, int mx, int my) {
+        int size = ATTACH_TILE;
+        int tx = x;
+        for (ChatAttachment attachment : List.copyOf(attachments)) {
+            ChatImages.Handle handle = ChatImages.local(attachment.id(), attachment.data(), size * guiScale());
+            boolean hovered = UiRender.inside(mx, my, tx, y, size, size);
+            drawImageTile(g, handle, tx, y, size, size, Theme.WINDOW, false);
+            UiRender.roundBorder(g, tx, y, size, size, 3, hovered ? Theme.BORDER_STRONG : Theme.BORDER);
+            if (uploading) {
+                UiRender.roundRect(g, tx, y, size, size, 3, 0x99000000);
+                UiRender.spinner(g, tx + size / 2, y + size / 2, Theme.TEXT);
+            } else {
+                int rx = tx + size - 11;
+                int ry = y + 1;
+                boolean removeHovered = UiRender.inside(mx, my, rx, ry, 10, 10);
+                UiRender.roundRect(g, rx, ry, 10, 10, 2, removeHovered ? Theme.DANGER : 0xCC0B0D11);
+                Icon.CLOSE.drawCentered(g, rx + 5, ry + 5, 1, Theme.TEXT);
+                if (removeHovered) showTooltip(trs("chat.attach.remove"));
+                hits.add(rx, ry, 10, 10, () -> {
+                    UiButton.playClick();
+                    removePendingImage(attachment);
+                });
+            }
+            tx += size + 4;
+        }
+        for (int i = 0; i < preparingImages; i++) {
+            UiRender.card(g, tx, y, size, size, 3, Theme.SURFACE, Theme.BORDER);
+            UiRender.spinner(g, tx + size / 2, y + size / 2, Theme.TEXT_SECONDARY);
+            tx += size + 4;
+        }
+        int count = attachments.size();
+        if (count > 0) {
+            String info = trs(count == 1 ? "chat.attach.count.one" : "chat.attach.count", count);
+            UiRender.text(g, this.font, info, tx + 4, y + size / 2 - 4, Theme.TEXT_MUTED);
+        }
+    }
+
+    /** Image cropped into the box with rounded corners; placeholder while loading or when it failed. */
+    private void drawImageTile(Gfx g, ChatImages.Handle handle, int x, int y, int w, int h, int bg, boolean hovered) {
+        if (handle.ready()) {
+            UiRender.imageCover(g, handle.texture(), handle.width(), handle.height(), x, y, w, h);
+            if (hovered) UiRender.fill(g, x, y, x + w, y + h, 0x22FFFFFF);
+            UiRender.roundCorners(g, x, y, w, h, 3, bg);
+            return;
+        }
+        UiRender.roundRect(g, x, y, w, h, 3, Theme.SURFACE);
+        if (handle.status() == ChatImages.Status.FAILED) {
+            Icon.IMAGE.drawCentered(g, x + w / 2, y + h / 2, w >= 40 ? 2 : 1, Theme.TEXT_MUTED);
+        } else {
+            UiRender.spinner(g, x + w / 2, y + h / 2, Theme.TEXT_MUTED);
+        }
     }
 
     private void drawNoChatState(Gfx g, int px, int pw) {
@@ -976,8 +1325,39 @@ public class SocialScreen extends UiScreen {
         UiRender.text(g, this.font, bold, cx - this.font.width(bold) / 2, y, color);
     }
 
+    /**
+     * One row of the chat. Bubbles with images show them on top ({@code images} box), text below
+     * starting at {@code textTop}; image-only messages have no bubble background.
+     */
     private record ChatItem(int y, int h, String day, ChatMessage message, List<FormattedCharSequence> lines,
-                            int bubbleW, boolean showMeta) {
+                            int bubbleW, int bubbleH, int textTop, ImageBox images, boolean showMeta) {
+    }
+
+    /** Size of the image block of a message: one fitted preview or a grid of square tiles. */
+    private record ImageBox(int w, int h, int columns, int tile) {
+    }
+
+    private int thumbSide() {
+        return Math.max(THUMB_MAX_W, THUMB_MAX_H) * guiScale();
+    }
+
+    private ImageBox imageBox(List<String> urls, int maxW) {
+        if (urls.isEmpty()) return null;
+        if (urls.size() == 1) {
+            // Only peek here: images are requested when they are actually drawn on screen.
+            ChatImages.Handle handle = ChatImages.peek(urls.get(0), thumbSide());
+            int boxW = Math.min(maxW, THUMB_MAX_W);
+            if (handle == null || !handle.ready()) return new ImageBox(boxW, Math.min(THUMB_MAX_H, boxW * 3 / 4), 1, 0);
+            float fit = Math.min(boxW / (float) handle.sourceWidth(), THUMB_MAX_H / (float) handle.sourceHeight());
+            // Tiny images (emotes, icons) at most at twice their pixel size instead of blown up.
+            fit = Math.min(fit, 2.0F / guiScale());
+            return new ImageBox(Math.max(16, Math.round(handle.sourceWidth() * fit)),
+                    Math.max(16, Math.round(handle.sourceHeight() * fit)), 1, 0);
+        }
+        int columns = Math.min(3, urls.size());
+        int rows = (urls.size() + columns - 1) / columns;
+        int tile = Math.min(TILE, (maxW - (columns - 1) * 2) / columns);
+        return new ImageBox(columns * tile + (columns - 1) * 2, rows * tile + (rows - 1) * 2, columns, tile);
     }
 
     private static LocalDate dateOf(long millis) {
@@ -1000,7 +1380,7 @@ public class SocialScreen extends UiScreen {
                 String label = day.equals(today) ? trs("chat.today")
                         : day.equals(today.minusDays(1)) ? trs("chat.yesterday")
                         : day.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM));
-                items.add(new ChatItem(y, 14, label, null, null, 0, false));
+                items.add(new ChatItem(y, 14, label, null, null, 0, 0, 0, null, false));
                 y += 18;
                 previous = null;
                 previousDay = day;
@@ -1009,15 +1389,31 @@ public class SocialScreen extends UiScreen {
                     && message.timestamp() - previous.timestamp() < GROUP_WINDOW_MS;
             if (previous != null) y += grouped ? 2 : 6;
 
-            List<FormattedCharSequence> lines = this.font.split(Component.literal(message.text()), maxBubble - 12);
+            boolean hasText = !message.text().isBlank();
+            List<FormattedCharSequence> lines = hasText
+                    ? this.font.split(Component.literal(message.text()), maxBubble - 12) : List.of();
             int textW = 0;
             for (FormattedCharSequence line : lines) textW = Math.max(textW, this.font.width(line));
-            int bubbleH = lines.size() * 10 + 6;
+            ImageBox images = imageBox(message.images(), maxBubble - 6);
+            int bubbleW;
+            int bubbleH;
+            int textTop = 0;
+            if (images == null) {
+                bubbleW = textW + 12;
+                bubbleH = lines.size() * 10 + 6;
+            } else if (!hasText) {
+                bubbleW = images.w();
+                bubbleH = images.h();
+            } else {
+                textTop = images.h() + 2;
+                bubbleW = Math.max(textW + 12, images.w() + 6);
+                bubbleH = textTop + lines.size() * 10 + 6;
+            }
             boolean lastOfGroup = next == null || next.outgoing() != message.outgoing()
                     || next.timestamp() - message.timestamp() >= GROUP_WINDOW_MS
                     || !dateOf(next.timestamp()).equals(day);
             int h = bubbleH + (lastOfGroup ? 11 : 0);
-            items.add(new ChatItem(y, h, null, message, lines, textW + 12, lastOfGroup));
+            items.add(new ChatItem(y, h, null, message, lines, bubbleW, bubbleH, textTop, images, lastOfGroup));
             y += h;
             previous = message;
         }
@@ -1033,14 +1429,20 @@ public class SocialScreen extends UiScreen {
         UiRender.textCentered(g, this.font, label, cx, y + 3, Theme.TEXT_MUTED);
     }
 
-    private void drawBubble(Gfx g, ChatItem item, int left, int right, int y) {
+    private void drawBubble(Gfx g, ChatItem item, int left, int right, int y, boolean inChat, int mx, int my) {
         ChatMessage message = item.message();
         boolean out = message.outgoing();
-        int bubbleH = item.lines().size() * 10 + 6;
+        int bubbleH = item.bubbleH();
         int bx = out ? right - item.bubbleW() : left;
         int bg = message.state() == ChatMessage.State.FAILED ? Theme.withAlpha(Theme.DANGER, 0x80) : (out ? Theme.BUBBLE_OUT : Theme.BUBBLE_IN);
-        UiRender.roundRect(g, bx, y, item.bubbleW(), bubbleH, 5, bg);
-        int ty = y + 4;
+        boolean hasText = !item.lines().isEmpty();
+        if (hasText) UiRender.roundRect(g, bx, y, item.bubbleW(), bubbleH, 5, bg);
+        if (item.images() != null) {
+            // Inside a text bubble the images sit on the bubble color, alone on the window background.
+            int ix = hasText ? (out ? bx + item.bubbleW() - 3 - item.images().w() : bx + 3) : bx;
+            drawMessageImages(g, message, item.images(), ix, hasText ? y + 3 : y, hasText ? bg : Theme.WINDOW, inChat, mx, my);
+        }
+        int ty = y + item.textTop() + 4;
         for (FormattedCharSequence line : item.lines()) {
             UiRender.text(g, this.font, line, bx + 6, ty, out ? Theme.TEXT_ON_ACCENT : Theme.TEXT);
             ty += 10;
@@ -1053,8 +1455,38 @@ public class SocialScreen extends UiScreen {
             if (out) UiRender.textRight(g, this.font, meta, right - 2, y + bubbleH + 2, color);
             else UiRender.text(g, this.font, meta, bx + 2, y + bubbleH + 2, color);
         }
-        hits.add(bx, y, item.bubbleW(), bubbleH, null, (cx, cy) -> openContextMenu(new ContextMenu()
-                .add(trs("chat.copy"), Icon.COPY, () -> copyToClipboard(message.text())), cx, cy));
+        if (hasText) {
+            int textY = y + item.textTop();
+            hits.add(bx, textY, item.bubbleW(), bubbleH - item.textTop(), null, (cx, cy) -> openContextMenu(new ContextMenu()
+                    .add(trs("chat.copy"), Icon.COPY, () -> copyToClipboard(message.text())), cx, cy));
+        }
+    }
+
+    private void drawMessageImages(Gfx g, ChatMessage message, ImageBox box, int x, int y, int bg,
+                                   boolean inChat, int mx, int my) {
+        List<String> urls = message.images();
+        for (int i = 0; i < urls.size(); i++) {
+            int tx = x, ty = y, tw = box.w(), th = box.h();
+            if (urls.size() > 1) {
+                tx = x + (i % box.columns()) * (box.tile() + 2);
+                ty = y + (i / box.columns()) * (box.tile() + 2);
+                tw = th = box.tile();
+            }
+            String url = urls.get(i);
+            boolean hovered = inChat && UiRender.inside(mx, my, tx, ty, tw, th);
+            drawImageTile(g, ChatImages.remote(url, thumbSide()), tx, ty, tw, th, bg, hovered);
+            int index = i;
+            hits.add(tx, ty, tw, th, (cx, cy) -> openViewer(urls, index), (cx, cy) -> {
+                ContextMenu menu = new ContextMenu()
+                        .add(trs("image.view"), Icon.IMAGE, () -> openViewer(urls, index))
+                        .add(trs("image.copy_link"), Icon.COPY, () -> copyToClipboard(url))
+                        .add(trs("image.open"), Icon.WORLD, () -> ClientCompat.openLink(this, url));
+                if (!message.text().isBlank()) {
+                    menu.add(trs("chat.copy"), Icon.COPY, () -> copyToClipboard(message.text()));
+                }
+                openContextMenu(menu, cx, cy);
+            });
+        }
     }
 
     // =====================================================================================
@@ -1062,9 +1494,55 @@ public class SocialScreen extends UiScreen {
     // =====================================================================================
 
     @Override
+    protected boolean hasOverlay() {
+        return super.hasOverlay() || viewer != null;
+    }
+
+    @Override
+    protected void drawOverlay(Gfx g, int mouseX, int mouseY) {
+        if (viewer != null && viewer.isClosed()) viewer = null;
+        if (viewer != null) viewer.draw(g, this.font, mouseX, mouseY, this.width, this.height);
+    }
+
+    @Override
+    protected boolean onEscape() {
+        if (viewer == null) return false;
+        viewer = null;
+        return true;
+    }
+
+    @Override
+    protected void onOverlayKey(int key) {
+        if (viewer != null) viewer.key(key);
+    }
+
+    /** Ctrl+V with an image in the clipboard attaches it; plain text is pasted by the field as usual. */
+    @Override
+    protected boolean onPaste() {
+        if (!chatField.isFocused() || !canAttachImages()) return false;
+        String text = this.minecraft.keyboardHandler.getClipboard();
+        if (!ClipboardImages.mayHaveImage(text)) return false;
+        addImages(selectedFriendId, ClipboardImages.read(), text);
+        return true;
+    }
+
+    /** Image files dragged onto the window become attachments of the open conversation. */
+    @Override
+    public void onFilesDrop(List<Path> paths) {
+        if (canAttachImages() && !hasOverlay()) addImageFiles(selectedFriendId, paths);
+    }
+
+    @Override
     protected boolean onMouseClicked(double mx, double my, int button) {
+        if (viewer != null) {
+            if (button == 0) viewer.click(mx, my);
+            else viewer.close();
+            if (viewer.isClosed()) viewer = null;
+            return true;
+        }
         if (button == 0) {
             if (listScroll.mouseClicked(mx, my) || chatScroll.mouseClicked(mx, my)) return true;
+            if (imageButton.visible && imageButton.click(mx, my)) return true;
             for (UiButton b : new UiButton[]{closeButton, addButton, sendButton, inviteButton, moreButton}) {
                 if (b.click(mx, my)) return true;
             }

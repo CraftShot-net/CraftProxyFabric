@@ -2,6 +2,7 @@ package net.craftproxy.mod.client.managers;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import net.craftproxy.mod.CraftProxy;
+import net.craftproxy.mod.client.config.Endpoints;
 import net.craftproxy.mod.client.dto.CosmeticEntryDto;
 import net.craftproxy.mod.client.dto.CosmeticsBatchResponseDto;
 import net.craftproxy.mod.client.utils.HttpUtils;
@@ -25,7 +26,7 @@ import java.util.stream.Collectors;
 
 public class CapeManager {
 
-    private static final String BASE_URL = "https://backend.craftproxy.net";
+    private static final String BASE_URL = Endpoints.craftProxyBackend();
 
     // uuid -> cosmeticId, or explicit "NONE" sentinel for "we checked, they have no cape"
     private static final Map<UUID, String> EQUIPPED_CAPES = new ConcurrentHashMap<>();

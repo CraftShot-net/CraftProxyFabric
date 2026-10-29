@@ -4,6 +4,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
 import net.craftproxy.mod.client.compat.SkinData;
+import net.craftproxy.mod.client.config.Endpoints;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.DefaultPlayerSkin;
 //? if >=1.21.9 {
@@ -138,7 +139,7 @@ public class SkinManager {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 HttpClient client = HttpClient.newHttpClient();
-                HttpRequest request = HttpRequest.newBuilder().uri(URI.create("https://api.mojang.com/users/profiles/minecraft/" + username)).GET().build();
+                HttpRequest request = HttpRequest.newBuilder().uri(URI.create(Endpoints.mojangProfile() + "/users/profiles/minecraft/" + username)).GET().build();
 
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 

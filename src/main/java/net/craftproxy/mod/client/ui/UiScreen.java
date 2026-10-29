@@ -83,6 +83,24 @@ public abstract class UiScreen extends Screen {
         return false;
     }
 
+    /** Ctrl+V (Cmd+V on macOS) without an overlay; return true to stop the focused field from pasting text. */
+    protected boolean onPaste() {
+        return false;
+    }
+
+    /** Escape without dialog or context menu; return true when a screen specific overlay was closed instead of the screen. */
+    protected boolean onEscape() {
+        return false;
+    }
+
+    /** Key press while any overlay is open (the key is consumed either way). */
+    protected void onOverlayKey(int key) {
+    }
+
+    /** Screen specific modal overlay above everything but notices, menus and dialogs, with the real mouse position. */
+    protected void drawOverlay(Gfx g, int mouseX, int mouseY) {
+    }
+
     /** Y coordinate the inline notice pill is centered on. */
     protected int noticeY() {
         return this.height - 26;
@@ -172,6 +190,7 @@ public abstract class UiScreen extends Screen {
 
     private void endFrame(Gfx g, int mouseX, int mouseY) {
         drawForeground(g, hoverX, hoverY);
+        drawOverlay(g, mouseX, mouseY);
         drawNotice(g);
         if (contextMenu != null && contextMenu.isOpen()) {
             contextMenu.draw(g, this.font, mouseX, mouseY);
@@ -284,18 +303,22 @@ public abstract class UiScreen extends Screen {
         return onScroll(mx, my, amount);
     }
 
-    private boolean handleKey(int key) {
+    private boolean handleKey(int key, boolean paste) {
         if (key == InputConstants.KEY_ESCAPE) {
             if (dialog != null && !dialog.isClosed()) {
                 dialog.close();
             } else if (contextMenu != null && contextMenu.isOpen()) {
                 contextMenu.close();
-            } else {
+            } else if (!onEscape()) {
                 ClientCompat.setScreen(null);
             }
             return true;
         }
-        if (hasOverlay()) return true;
+        if (hasOverlay()) {
+            onOverlayKey(key);
+            return true;
+        }
+        if (paste && onPaste()) return true;
         return onKey(key);
     }
 
@@ -318,7 +341,7 @@ public abstract class UiScreen extends Screen {
 
     @Override
     public boolean keyPressed(final KeyEvent event) {
-        return handleKey(event.key()) || super.keyPressed(event);
+        return handleKey(event.key(), event.isPaste()) || super.keyPressed(event);
     }
     //?} else {
     /*@Override
@@ -339,7 +362,7 @@ public abstract class UiScreen extends Screen {
 
     @Override
     public boolean keyPressed(final int keyCode, final int scanCode, final int modifiers) {
-        return handleKey(keyCode) || super.keyPressed(keyCode, scanCode, modifiers);
+        return handleKey(keyCode, Screen.isPaste(keyCode)) || super.keyPressed(keyCode, scanCode, modifiers);
     }
     *///?}
 

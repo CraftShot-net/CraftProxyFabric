@@ -2,6 +2,7 @@ package net.craftproxy.mod.client.compat;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.toasts.Toast;
+import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.server.IntegratedServer;
@@ -13,6 +14,8 @@ import net.minecraft.resources.Identifier;
 //? if >=26.2 {
 import net.minecraft.server.MinecraftServer;
 //?}
+
+import java.net.URI;
 
 /**
  * Small helpers for Minecraft APIs that moved or changed shape between the supported versions.
@@ -97,6 +100,15 @@ public final class ClientCompat {
         //?} else {
         /*return style.withClickEvent(new ClickEvent(ClickEvent.Action.COPY_TO_CLIPBOARD, text))
                 .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, hover));
+        *///?}
+    }
+
+    /** Asks the player to confirm, then opens {@code url} in the browser; returns to {@code parent} afterwards. */
+    public static void openLink(Screen parent, String url) {
+        //? if >=1.20.5 {
+        ConfirmLinkScreen.confirmLinkNow(parent, URI.create(url));
+        //?} else {
+        /*ConfirmLinkScreen.confirmLinkNow(url, parent, false);
         *///?}
     }
 

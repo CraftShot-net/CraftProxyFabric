@@ -1,5 +1,6 @@
 package net.craftproxy.mod.client.rpc;
 
+import net.craftproxy.mod.client.config.Endpoints;
 import net.minecraft.client.Minecraft;
 
 import java.util.concurrent.Executors;
@@ -97,8 +98,8 @@ public class DiscordRPCManager {
         }
 
         presence.setButtons(
-                "CraftProxy Website", "https://craftproxy.net?utm_source=discord-rpc",
-                "Join our Discord", "https://discord.gg/HP9yR8A2m9"
+                "CraftProxy Website", Endpoints.craftProxyWebsite() + "?utm_source=discord-rpc",
+                "Join our Discord", Endpoints.discordRpc()
         );
 
         CraftProxyDiscordIPC.setActivity(presence);
@@ -118,7 +119,7 @@ public class DiscordRPCManager {
         currentContextKey = null;
     }
 
-    private static final String CRAFTPROXY_DOMAIN_SUFFIX = ".craftproxy.net";
+    private static final String CRAFTPROXY_DOMAIN_SUFFIX = Endpoints.tunnelDomainSuffix();
 
     public static void updateDiscordPresence(Minecraft mc) {
         String version = "Minecraft " + net.craftproxy.mod.client.compat.ClientCompat.gameVersionName();

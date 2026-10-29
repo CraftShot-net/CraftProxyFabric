@@ -44,7 +44,7 @@ public final class WorldInvites {
      * Opens the world to LAN if needed, starts the tunnel if it is not running yet and sends the
      * invite. {@code onResult} receives whether the backend accepted it (on an arbitrary thread).
      */
-    public static void sendInvite(String friendName, Consumer<Boolean> onResult) {
+    public static void sendInvite(String friendName, String friendUuid, Consumer<Boolean> onResult) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.getSingleplayerServer() == null) {
             return;
@@ -62,14 +62,14 @@ public final class WorldInvites {
         }
 
         if (MCTunnelClient.getInstance().getTunnelClient().isConnected()) {
-            executeApiInvite(friendName, worldName, MCTunnelClient.getInstance().getTunnelClient().getHostname(), onResult);
+            executeApiInvite(friendName, friendUuid, worldName, MCTunnelClient.getInstance().getTunnelClient().getHostname(), onResult);
         } else {
-            TunnelManager.host(mc, MCTunnelClient.getInstance().getTunnelClient(), hostname -> executeApiInvite(friendName, worldName, hostname, onResult));
+            TunnelManager.host(mc, MCTunnelClient.getInstance().getTunnelClient(), hostname -> executeApiInvite(friendName, friendUuid, worldName, hostname, onResult));
         }
     }
 
-    private static void executeApiInvite(String friendName, String worldName, String tunnelIp, Consumer<Boolean> onResult) {
-        FriendManager.getInstance().sendWorldInvite(friendName, worldName, tunnelIp).thenAccept(success -> {
+    private static void executeApiInvite(String friendName, String friendUuid, String worldName, String tunnelIp, Consumer<Boolean> onResult) {
+        FriendManager.getInstance().sendWorldInvite(friendName, friendUuid, worldName, tunnelIp).thenAccept(success -> {
             if (success) {
                 System.out.println("[CraftProxy] Sent invite to " + friendName + " for world " + worldName + " at " + tunnelIp);
             } else {

@@ -1,6 +1,7 @@
 package net.craftproxy.mod.client;
 
 import net.craftproxy.mod.client.compat.ClientCompat;
+import net.craftproxy.mod.client.config.Endpoints;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -31,7 +32,7 @@ public class TunnelClient {
     private static final String TRANSLATION_PREFIX = "message.craftproxy.tunnel.";
 
     public static final AttributeKey<String> PLAYER_IP = AttributeKey.valueOf("playerIp");
-    private static final String SERVER_HOST = "craftproxy.net";
+    private static final String SERVER_HOST = Endpoints.tunnelHost();
     private static final int CONTROL_PORT = 8000;
     private static final int BRIDGE_PORT = 8001;
 
@@ -70,7 +71,7 @@ public class TunnelClient {
                         String uuid = Minecraft.getInstance().getUser().getProfileId().toString().replace("-", "");
                         String serverId = UUID.randomUUID().toString().replace("-", "");
 
-                        HttpUtils mojangApi = new HttpUtils("https://sessionserver.mojang.com");
+                        HttpUtils mojangApi = new HttpUtils(Endpoints.mojangSession());
                         Map<String, String> joinBody = new HashMap<>();
                         joinBody.put("accessToken", mcToken);
                         joinBody.put("selectedProfile", uuid);

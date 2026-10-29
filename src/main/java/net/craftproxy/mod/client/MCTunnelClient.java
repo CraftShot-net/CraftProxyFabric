@@ -3,7 +3,12 @@ package net.craftproxy.mod.client;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.craftproxy.mod.CraftProxy;
 import net.craftproxy.mod.client.compat.ClientCompat;
+import net.craftproxy.mod.client.config.Endpoints;
+import net.craftproxy.mod.client.chat.ChatNotifications;
+import net.craftproxy.mod.client.chat.ChatServices;
+import net.craftproxy.mod.client.chat.CraftShotChatService;
 import net.craftproxy.mod.client.dto.AuthResponseDto;
+import net.craftproxy.mod.client.gui.ChatToast;
 import net.craftproxy.mod.client.gui.IconButton;
 import net.craftproxy.mod.client.managers.FriendManager;
 import net.craftproxy.mod.client.managers.TunnelManager;
@@ -19,6 +24,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenKeyboardEvents;
+import net.fabricmc.fabric.api.client.screen.v1.ScreenMouseEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
 //? if >=26.1 {
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
@@ -77,6 +83,9 @@ public class MCTunnelClient implements ClientModInitializer {
     public static MCTunnelClient instance;
     public static TunnelClient tunnelClient;
     public static String apiToken = null;
+    /** CraftShot social-core token; {@code null} until federated auth succeeds. */
+    public static String craftshotToken = null;
+    public static Integer craftshotUserId = null;
     private static String lastKnownMcToken = null;
     //? if >=1.21.9 {
     public static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(CraftProxy.id("keys"));
@@ -141,6 +150,16 @@ public class MCTunnelClient implements ClientModInitializer {
                 addDiscordIconButton(screen, scaledWidth - 72, 6);
             }
 
+            // Chat toasts are regular vanilla toasts; clicks are routed through the screen events
+            // so the toast can open the conversation (works on title, pause and social screens).
+            //? if >=1.21.9 {
+            ScreenMouseEvents.allowMouseClick(screen).register((s, event) ->
+                    !ChatToast.clickAt(event.x(), event.y(), event.button()));
+            //?} else {
+            /*ScreenMouseEvents.allowMouseClick(screen).register((s, mouseX, mouseY, button) ->
+                    !ChatToast.clickAt(mouseX, mouseY, button));
+            *///?}
+
             // Vanilla only fires key mappings without an open screen, so menus get the hotkeys here.
             //? if >=1.21.9 {
             ScreenKeyboardEvents.allowKeyPress(screen).register((s, event) ->
@@ -179,6 +198,9 @@ public class MCTunnelClient implements ClientModInitializer {
             if (lastKnownMcToken != null && !lastKnownMcToken.equals(currentMcToken)) {
                 lastKnownMcToken = currentMcToken;
                 apiToken = null;
+                craftshotToken = null;
+                craftshotUserId = null;
+                ChatServices.reset();
 
                 // If the tunnel is currently active, kill it immediately
                 if (tunnelClient.isConnected()) {
@@ -228,6 +250,7 @@ public class MCTunnelClient implements ClientModInitializer {
             if (tunnelClient.isConnected()) tunnelClient.disconnect();
             FriendManager.shutdownAndSetOffline();
             WardrobeManager.shutdown();
+            ChatServices.reset();
             DiscordRPCManager.shutdown();
         });
 
@@ -275,7 +298,6 @@ public class MCTunnelClient implements ClientModInitializer {
             }
 
             try {
-                System.out.println("[CraftProxy] Calling updateDiscordPresence...");
                 DiscordRPCManager.updateDiscordPresence(mc);
             } catch (Exception e) {
                 System.out.println("[CraftProxy] Discord presence update failed: " + e);
@@ -314,7 +336,7 @@ public class MCTunnelClient implements ClientModInitializer {
     private static final Identifier FRIENDS_ICON = CraftProxy.id("textures/gui/icon_friends.png");
     private static final Identifier WARDROBE_ICON = CraftProxy.id("textures/gui/icon_wardrobe.png");
     private static final Identifier DISCORD_ICON = CraftProxy.id("textures/gui/icon_discord.png");
-    private static final String DISCORD_URL = "https://discord.gg/wBj5Jf9pcm";
+    private static final String DISCORD_URL = Endpoints.discord();
 
     private static List<AbstractWidget> widgetsOf(Screen screen) {
         //? if >=26.1 {
@@ -338,18 +360,24 @@ public class MCTunnelClient implements ClientModInitializer {
         }).badge(MCTunnelClient::pendingSocialCount);
 
         friendsButton.active = apiToken != null;
-        friendsButton.setTooltip(Tooltip.create(tr("open_friends_button")));
+        friendsButton.setTooltip(Tooltip.create(apiToken != null ? tr("open_friends_button") : tr("not_connected")));
 
         widgetsOf(screen).add(friendsButton);
 
-        ScreenEvents.afterTick(screen).register(s -> friendsButton.active = apiToken != null);
+        ScreenEvents.afterTick(screen).register(s -> {
+            boolean connected = apiToken != null;
+            friendsButton.active = connected;
+            friendsButton.setTooltip(Tooltip.create(connected ? tr("open_friends_button") : tr("not_connected")));
+        });
     }
 
     // Friend requests plus world invites, shown as badge on the friends button.
     private static int pendingSocialCount() {
         if (!FriendManager.isInitialized()) return 0;
         FriendManager manager = FriendManager.getInstance();
-        return manager.getCachedPendingRequests().size() + manager.getCachedWorldInvites().size();
+        return manager.getCachedPendingRequests().size()
+                + manager.getCachedWorldInvites().size()
+                + ChatServices.get().unreadTotal();
     }
 
     private static void addWardrobeIconButton(Screen screen, int x, int y) {
@@ -360,11 +388,15 @@ public class MCTunnelClient implements ClientModInitializer {
         });
 
         wardrobeButton.active = apiToken != null;
-        wardrobeButton.setTooltip(Tooltip.create(tr("open_wardrobe_button")));
+        wardrobeButton.setTooltip(Tooltip.create(apiToken != null ? tr("open_wardrobe_button") : tr("not_connected")));
 
         widgetsOf(screen).add(wardrobeButton);
 
-        ScreenEvents.afterTick(screen).register(s -> wardrobeButton.active = apiToken != null);
+        ScreenEvents.afterTick(screen).register(s -> {
+            boolean connected = apiToken != null;
+            wardrobeButton.active = connected;
+            wardrobeButton.setTooltip(Tooltip.create(connected ? tr("open_wardrobe_button") : tr("not_connected")));
+        });
     }
 
     private static void addDiscordIconButton(Screen screen, int x, int y) {
@@ -393,6 +425,20 @@ public class MCTunnelClient implements ClientModInitializer {
         return tunnelClient;
     }
 
+    private static volatile long lastCraftshotReauthAt;
+
+    /**
+     * Called when CraftShot rejects our token, e.g. because another client of the same player
+     * replaced it. Logging in again fetches the current one; at most once a minute.
+     */
+    public static void onCraftshotUnauthorized() {
+        long now = System.currentTimeMillis();
+        if (apiToken == null || craftshotToken == null || now - lastCraftshotReauthAt < 60_000L) return;
+        lastCraftshotReauthAt = now;
+        System.out.println("[CraftProxy] CraftShot token rejected, re-authenticating...");
+        authenticate(Minecraft.getInstance());
+    }
+
     public static void authenticate(Minecraft mc) {
         new Thread(() -> {
             try {
@@ -401,7 +447,7 @@ public class MCTunnelClient implements ClientModInitializer {
                 String uuid = mc.getUser().getProfileId().toString().replace("-", "");
                 String serverId = UUID.randomUUID().toString().replace("-", "");
 
-                HttpUtils mojangApi = new HttpUtils("https://sessionserver.mojang.com");
+                HttpUtils mojangApi = new HttpUtils(Endpoints.mojangSession());
                 Map<String, String> joinBody = new HashMap<>();
                 joinBody.put("accessToken", mcToken);
                 joinBody.put("selectedProfile", uuid);
@@ -414,7 +460,7 @@ public class MCTunnelClient implements ClientModInitializer {
                     return;
                 }
 
-                HttpUtils api = new HttpUtils("https://backend.craftproxy.net/");
+                HttpUtils api = new HttpUtils(Endpoints.craftProxyBackend());
                 Map<String, String> body = new HashMap<>();
                 body.put("username", username);
                 body.put("server_id", serverId);
@@ -424,10 +470,22 @@ public class MCTunnelClient implements ClientModInitializer {
                 if (res.isSuccessful()) {
                     AuthResponseDto authData = res.as(AuthResponseDto.class);
                     apiToken = authData.token;
+                    craftshotToken = authData.craftshot_token;
+                    craftshotUserId = authData.craftshot_user_id;
 
-                    FriendManager.init("https://backend.craftproxy.net", apiToken);
-                    WardrobeManager.init("https://backend.craftproxy.net", apiToken);
+                    FriendManager.init(
+                            Endpoints.craftProxyBackend(), apiToken,
+                            Endpoints.craftShot(), craftshotToken);
+                    WardrobeManager.init(Endpoints.craftProxyBackend(), apiToken);
                     WardrobeManager.getInstance().fetchMyCosmetics();
+
+                    if (craftshotToken != null && craftshotUserId != null && craftshotUserId > 0) {
+                        ChatServices.set(new CraftShotChatService(
+                                Endpoints.craftShot(), craftshotToken, craftshotUserId, authData.craftshot_reverb));
+                        ChatNotifications.register();
+                    } else {
+                        ChatServices.reset();
+                    }
 
                     System.out.println("[CraftProxy] Successfully authenticated as " + authData.user.name);
 
