@@ -3,6 +3,9 @@ package net.craftproxy.mod.client.gui;
 import net.craftproxy.mod.client.compat.ClientCompat;
 import net.craftproxy.mod.client.compat.Gfx;
 import net.craftproxy.mod.client.compat.SkinData;
+import net.craftproxy.mod.client.ui.Icon;
+import net.craftproxy.mod.client.ui.Theme;
+import net.craftproxy.mod.client.ui.UiRender;
 import net.minecraft.client.gui.Font;
 //? if >=26.1 {
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -56,58 +59,51 @@ public class WorldInviteToast implements Toast {
     //? if >=26.1 {
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, Font font, long fullyVisibleForMs) {
-        draw(new Gfx(graphics), font);
+        draw(new Gfx(graphics), font, fullyVisibleForMs);
     }
     //?} else if >=1.21.2 {
     /*@Override
     public void render(GuiGraphics graphics, Font font, long fullyVisibleForMs) {
-        draw(new Gfx(graphics), font);
+        draw(new Gfx(graphics), font, fullyVisibleForMs);
     }
     *///?} else {
     /*@Override
     public Visibility render(GuiGraphics graphics, ToastComponent toasts, long fullyVisibleForMs) {
-        draw(new Gfx(graphics), toasts.getMinecraft().font);
+        draw(new Gfx(graphics), toasts.getMinecraft().font, fullyVisibleForMs);
         return fullyVisibleForMs >= DISPLAY_TIME_MS ? Visibility.HIDE : Visibility.SHOW;
     }
     *///?}
 
-    private void draw(Gfx graphics, Font font) {
+    private void draw(Gfx graphics, Font font, long visibleMs) {
         int w = width();
         int h = height();
 
-        graphics.fill(0, 0, w, h, 0xEE0D0D0D);
+        UiRender.card(graphics, 0, 0, w, h, 4, Theme.WINDOW, Theme.BORDER_STRONG);
+        UiRender.roundRect(graphics, 1, 6, 2, h - 12, 1, Theme.ACCENT);
 
-        graphics.fill(0, 0, w, 2, 0xFF55AAFF);
-
-        graphics.fill(0, 0, 3, h, 0xFF55AAFF);
-
-        int skinX = 8;
-        int skinY = (h - 16) / 2;
+        // Host avatar with a small "play" badge
         Identifier skinId = skinSupplier.get().texture();
-        graphics.blit(skinId, skinX, skinY, 8.0F, 8.0F, 16, 16, 8, 8, 64, 64);
-        graphics.blit(skinId, skinX, skinY, 40.0F, 8.0F, 16, 16, 8, 8, 64, 64);
+        UiRender.head(graphics, skinId, 9, 6, 20, Theme.WINDOW);
+        UiRender.roundRect(graphics, 23, 20, 10, 10, 3, Theme.WINDOW);
+        UiRender.roundRect(graphics, 24, 21, 8, 8, 2, Theme.ACCENT);
+        Icon.PLAY.draw(graphics, 26, 22, 1, Theme.TEXT_ON_ACCENT);
 
-        int textX = skinX + 16 + 5;
-        int textY1 = 5;
-        int textY2 = 5 + font.lineHeight + 2;
+        int textX = 38;
+        int maxW = w - textX - 8;
+        String title = Component.translatable("screen.craftproxy.social.toast.world_invite.title").getString();
+        UiRender.text(graphics, font, Component.literal(UiRender.ellipsize(font, title, maxW - 8)).withStyle(s -> s.withBold(true)), textX, 6, Theme.ACCENT_HOVER);
+        String message = Component.translatable("screen.craftproxy.social.toast.world_invite.message", hostName, worldName).getString();
+        UiRender.text(graphics, font, UiRender.ellipsize(font, message, maxW), textX, 17, Theme.TEXT_SECONDARY);
 
-        String title = Component.translatable("screen.craftproxy.friends.toast.world_invite.title").getString();
-        graphics.text(font, title, textX, textY1, 0xFF55AAFF);
-
-        String excerpt = Component.translatable("screen.craftproxy.friends.toast.world_invite.message", hostName, worldName).getString();
-        int maxW = w - textX - 6;
-        if (font.width(excerpt) > maxW) {
-            while (!excerpt.isEmpty() && font.width(excerpt + "…") > maxW) {
-                excerpt = excerpt.substring(0, excerpt.length() - 1);
-            }
-            excerpt += "…";
-        }
-        graphics.text(font, excerpt, textX, textY2, 0xFFCCCCCC);
+        // Remaining display time
+        float remaining = 1.0F - Math.min(1.0F, visibleMs / (float) DISPLAY_TIME_MS);
+        int barW = Math.round((w - 10) * remaining);
+        UiRender.fill(graphics, 5, h - 3, 5 + barW, h - 2, Theme.withAlpha(Theme.ACCENT, 0xA0));
     }
 
     @Override
     public int width() {
-        return 200;
+        return 210;
     }
 
     @Override

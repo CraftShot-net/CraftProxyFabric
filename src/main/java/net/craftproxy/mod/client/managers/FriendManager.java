@@ -5,6 +5,7 @@ import net.craftproxy.mod.client.utils.HttpUtils;
 import net.craftproxy.mod.client.utils.SkinManager;
 import net.minecraft.client.Minecraft;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -31,6 +32,8 @@ public class FriendManager {
     private final CopyOnWriteArrayList<UserDto> cachedPending = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<WorldInviteDto> cachedWorldInvites = new CopyOnWriteArrayList<>();
     private final Set<String> notifiedWorldInviteKeys = ConcurrentHashMap.newKeySet();
+    // Invites the player already joined; the backend keeps them until the host clears them.
+    private final Set<String> dismissedWorldInviteKeys = ConcurrentHashMap.newKeySet();
 
     // --- Listeners ---
     private final CopyOnWriteArrayList<Consumer<List<UserDto>>> pendingListeners = new CopyOnWriteArrayList<>();
@@ -52,6 +55,10 @@ public class FriendManager {
         }
         instance = new FriendManager(baseUrl, token);
         instance.startPolling();
+    }
+
+    public static boolean isInitialized() {
+        return instance != null;
     }
 
     public static FriendManager getInstance() {
@@ -187,21 +194,53 @@ public class FriendManager {
                 notifyListeners(pendingListeners, cachedPending);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logPollError(e);
         }
 
         try {
             HttpUtils.Response invitesRes = api.get("/api/world-invites");
             if (invitesRes.isSuccessful()) {
-                List<WorldInviteDto> fresh = invitesRes.as(WorldInvitesListResponse.class).invites();
+                List<WorldInviteDto> fresh = visibleWorldInvites(invitesRes.as(WorldInvitesListResponse.class).invites());
                 cachedWorldInvites.clear();
                 cachedWorldInvites.addAll(fresh);
                 notifyListeners(worldInvitesListeners, cachedWorldInvites);
                 notifyNewWorldInvites(fresh);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logPollError(e);
         }
+    }
+
+    // Polls are cancelled (interrupted) whenever the interval changes; that is not an error.
+    private static void logPollError(Exception e) {
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof InterruptedException) return;
+            cause = cause.getCause();
+        }
+        if (Thread.currentThread().isInterrupted()) return;
+        e.printStackTrace();
+    }
+
+    /** Drops invites the player already joined and forgets dismissals the backend no longer reports. */
+    private List<WorldInviteDto> visibleWorldInvites(List<WorldInviteDto> fresh) {
+        Set<String> freshKeys = new HashSet<>();
+        List<WorldInviteDto> visible = new ArrayList<>();
+        for (WorldInviteDto invite : fresh) {
+            String key = worldInviteKey(invite);
+            freshKeys.add(key);
+            if (!dismissedWorldInviteKeys.contains(key)) visible.add(invite);
+        }
+        dismissedWorldInviteKeys.retainAll(freshKeys);
+        return visible;
+    }
+
+    /** Hides an invite locally, e.g. after joining it. */
+    public void dismissWorldInvite(WorldInviteDto invite) {
+        String key = worldInviteKey(invite);
+        dismissedWorldInviteKeys.add(key);
+        cachedWorldInvites.removeIf(i -> worldInviteKey(i).equals(key));
+        notifyListeners(worldInvitesListeners, cachedWorldInvites);
     }
 
     private void notifyNewWorldInvites(List<WorldInviteDto> fresh) {
@@ -280,7 +319,7 @@ public class FriendManager {
         return CompletableFuture.supplyAsync(() -> {
             HttpUtils.Response res = api.get("/api/world-invites"); // <--- Endpunkt ggf. anpassen
             if (res.isSuccessful()) {
-                List<WorldInviteDto> fresh = res.as(WorldInvitesListResponse.class).invites();
+                List<WorldInviteDto> fresh = visibleWorldInvites(res.as(WorldInvitesListResponse.class).invites());
                 cachedWorldInvites.clear();
                 cachedWorldInvites.addAll(fresh);
                 notifyListeners(worldInvitesListeners, cachedWorldInvites);

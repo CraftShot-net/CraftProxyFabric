@@ -32,11 +32,12 @@ loom {
 	runs.named("client") {
 		client()
 		generateRunConfig.set(true)
-		runDirectory.set(layout.projectDirectory.dir("run"))
+		// -Pdev.runDir / -Pdev.account allow a second client side by side (e.g. run2 + alt).
+		runDirectory.set(layout.projectDirectory.dir(providers.gradleProperty("dev.runDir").getOrElse("run")))
 		jvmArguments.addAll(devJvmArgs)
 		// Log in with a real Microsoft account through DevAuth (see README).
 		jvmArguments.add("-Ddevauth.enabled=true")
-		jvmArguments.add("-Ddevauth.account=main")
+		jvmArguments.add("-Ddevauth.account=" + providers.gradleProperty("dev.account").getOrElse("main"))
 		displayName.set("Fabric Client")
 	}
 	runs.named("server") {

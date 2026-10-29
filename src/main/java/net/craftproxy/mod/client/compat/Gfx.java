@@ -11,7 +11,9 @@ import net.minecraft.client.renderer.RenderPipelines;
 //?} else {
 /*import com.mojang.blaze3d.systems.RenderSystem;
 *///?}
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.util.FormattedCharSequence;
 
 /**
  * Wraps the GUI drawing context so screens can use one drawing API on every version
@@ -50,6 +52,35 @@ public final class Gfx {
         //?} else {
         /*raw.drawString(font, text, x, y, color);
         *///?}
+    }
+
+    /** Draws text with or without the vanilla drop shadow. */
+    public void text(Font font, String text, int x, int y, int color, boolean shadow) {
+        //? if >=26.1 {
+        raw.text(font, text, x, y, color, shadow);
+        //?} else {
+        /*raw.drawString(font, text, x, y, color, shadow);
+        *///?}
+    }
+
+    public void text(Font font, FormattedCharSequence text, int x, int y, int color, boolean shadow) {
+        //? if >=26.1 {
+        raw.text(font, text, x, y, color, shadow);
+        //?} else {
+        /*raw.drawString(font, text, x, y, color, shadow);
+        *///?}
+    }
+
+    public void text(Font font, Component text, int x, int y, int color, boolean shadow) {
+        //? if >=26.1 {
+        raw.text(font, text, x, y, color, shadow);
+        //?} else {
+        /*raw.drawString(font, text, x, y, color, shadow);
+        *///?}
+    }
+
+    public void fillGradient(int x0, int y0, int x1, int y1, int colorTop, int colorBottom) {
+        raw.fillGradient(x0, y0, x1, y1, colorTop, colorBottom);
     }
 
     public void centeredText(Font font, String text, int x, int y, int color) {

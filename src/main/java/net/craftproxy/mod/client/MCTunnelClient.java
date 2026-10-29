@@ -9,7 +9,7 @@ import net.craftproxy.mod.client.managers.FriendManager;
 import net.craftproxy.mod.client.managers.TunnelManager;
 import net.craftproxy.mod.client.managers.WardrobeManager;
 import net.craftproxy.mod.client.rpc.DiscordRPCManager;
-import net.craftproxy.mod.client.screens.FriendsScreen;
+import net.craftproxy.mod.client.screens.SocialScreen;
 import net.craftproxy.mod.client.screens.WardrobeScreen;
 import net.craftproxy.mod.client.utils.HttpUtils;
 import net.fabricmc.api.ClientModInitializer;
@@ -18,6 +18,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
+import net.fabricmc.fabric.api.client.screen.v1.ScreenKeyboardEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
 //? if >=26.1 {
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
@@ -42,11 +43,22 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.TitleScreen;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.gui.screens.inventory.AbstractSignEditScreen;
+import net.minecraft.client.gui.screens.inventory.BookEditScreen;
+//? if >=1.21 {
+import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
+//?} else {
+/*import net.minecraft.client.gui.screens.controls.KeyBindsScreen;
+*///?}
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
@@ -78,6 +90,8 @@ public class MCTunnelClient implements ClientModInitializer {
     *///?}
     private static final KeyMapping openFriendsKey = registerKey(new KeyMapping("key.craftproxy.open_friends", KEYBOARD, InputConstants.KEY_I, CATEGORY));
     private static final KeyMapping openWardrobeKey = registerKey(new KeyMapping("key.craftproxy.open_wardrobe", KEYBOARD, InputConstants.KEY_H, CATEGORY));
+    // Hotkey pressed inside a menu; run on the next tick so the typed character does not reach the new screen.
+    private static Runnable pendingHotkeyAction;
 
     // Layout for the vertical mod-button column next to the (204px wide) vanilla pause menu.
     private static final int MOD_BUTTON_MARGIN = 2;
@@ -126,18 +140,33 @@ public class MCTunnelClient implements ClientModInitializer {
                 addWardrobeIconButton(screen, scaledWidth - 48, 6);
                 addDiscordIconButton(screen, scaledWidth - 72, 6);
             }
+
+            // Vanilla only fires key mappings without an open screen, so menus get the hotkeys here.
+            //? if >=1.21.9 {
+            ScreenKeyboardEvents.allowKeyPress(screen).register((s, event) ->
+                    !handleMenuHotkey(s, openFriendsKey.matches(event), openWardrobeKey.matches(event)));
+            //?} else {
+            /*ScreenKeyboardEvents.allowKeyPress(screen).register((s, key, scancode, modifiers) ->
+                    !handleMenuHotkey(s, openFriendsKey.matches(key, scancode), openWardrobeKey.matches(key, scancode)));
+            *///?}
         });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
 
+            if (pendingHotkeyAction != null) {
+                Runnable action = pendingHotkeyAction;
+                pendingHotkeyAction = null;
+                action.run();
+            }
+
             while (openFriendsKey.consumeClick()) {
-                if (ClientCompat.currentScreen() == null) {
-                    ClientCompat.setScreen(FriendsScreen.getInstance());
+                if (ClientCompat.currentScreen() == null && apiToken != null) {
+                    ClientCompat.setScreen(SocialScreen.getInstance());
                 }
             }
 
             while (openWardrobeKey.consumeClick()) {
-                if (ClientCompat.currentScreen() == null) {
+                if (ClientCompat.currentScreen() == null && apiToken != null) {
                     ClientCompat.setScreen(WardrobeScreen.getInstance());
                 }
             }
@@ -231,7 +260,12 @@ public class MCTunnelClient implements ClientModInitializer {
         });
         //?}
 
-        Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(() -> {
+        // Daemon thread so it never keeps the JVM alive after the client shuts down.
+        Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "CraftProxy-Heartbeat");
+            t.setDaemon(true);
+            return t;
+        }).scheduleAtFixedRate(() -> {
             try {
                 if (apiToken != null) {
                     FriendManager.getInstance().sendHeartbeat();
@@ -250,6 +284,31 @@ public class MCTunnelClient implements ClientModInitializer {
 
         }, 10, 30, TimeUnit.SECONDS);
 
+    }
+
+    /** Opens (or toggles) the social / wardrobe screen from any menu; returns true when the key was used. */
+    private static boolean handleMenuHotkey(Screen screen, boolean social, boolean wardrobe) {
+        if ((!social && !wardrobe) || apiToken == null || isTyping(screen)) return false;
+        Screen target = social ? SocialScreen.getInstance() : WardrobeScreen.getInstance();
+        pendingHotkeyAction = () -> {
+            Screen current = ClientCompat.currentScreen();
+            if (current == target) {
+                ClientCompat.setScreen(null);
+                return;
+            }
+            // Close containers properly so the server knows the menu is gone.
+            if (current instanceof AbstractContainerScreen<?>) current.onClose();
+            ClientCompat.setScreen(target);
+        };
+        return true;
+    }
+
+    private static boolean isTyping(Screen screen) {
+        if (screen instanceof AbstractSignEditScreen || screen instanceof BookEditScreen || screen instanceof KeyBindsScreen) return true;
+        for (GuiEventListener child : screen.children()) {
+            if ((child instanceof EditBox || child instanceof MultiLineEditBox) && child.isFocused()) return true;
+        }
+        return false;
     }
 
     private static final Identifier FRIENDS_ICON = CraftProxy.id("textures/gui/icon_friends.png");
@@ -274,9 +333,9 @@ public class MCTunnelClient implements ClientModInitializer {
     private static void addFriendsIconButton(Screen screen, int x, int y) {
         IconButton friendsButton = new IconButton(x, y, 20, FRIENDS_ICON, tr("open_friends_button"), button -> {
             if (apiToken != null) {
-                ClientCompat.setScreen(FriendsScreen.getInstance());
+                ClientCompat.setScreen(SocialScreen.getInstance());
             }
-        });
+        }).badge(MCTunnelClient::pendingSocialCount);
 
         friendsButton.active = apiToken != null;
         friendsButton.setTooltip(Tooltip.create(tr("open_friends_button")));
@@ -284,6 +343,13 @@ public class MCTunnelClient implements ClientModInitializer {
         widgetsOf(screen).add(friendsButton);
 
         ScreenEvents.afterTick(screen).register(s -> friendsButton.active = apiToken != null);
+    }
+
+    // Friend requests plus world invites, shown as badge on the friends button.
+    private static int pendingSocialCount() {
+        if (!FriendManager.isInitialized()) return 0;
+        FriendManager manager = FriendManager.getInstance();
+        return manager.getCachedPendingRequests().size() + manager.getCachedWorldInvites().size();
     }
 
     private static void addWardrobeIconButton(Screen screen, int x, int y) {

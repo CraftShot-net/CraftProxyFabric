@@ -18,7 +18,7 @@ public class CraftProxyDiscordIPC {
     private static final int OP_FRAME = 1;
     private static final int OP_CLOSE = 2;
 
-    private static RandomAccessFile pipe;
+    private static volatile RandomAccessFile pipe;
     private static Thread readThread;
 
     private static volatile boolean receivedDispatch = false;
@@ -144,10 +144,13 @@ public class CraftProxyDiscordIPC {
     }
 
     private static void readLoop() {
-        while (true) {
+        // Bound to the pipe it was started for: once stop() closes or replaces it, the loop ends
+        // instead of spinning on a null pipe.
+        RandomAccessFile own = pipe;
+        while (own != null && pipe == own) {
             try {
-                int opcode = Integer.reverseBytes(readInt());
-                int length = Integer.reverseBytes(readInt());
+                int opcode = Integer.reverseBytes(readInt(own));
+                int length = Integer.reverseBytes(readInt(own));
 
                 if (length < 0 || length > 10_000_000) {
                     // Sanity check: something is desynced on the wire, bail out entirely
@@ -156,16 +159,18 @@ public class CraftProxyDiscordIPC {
                 }
 
                 byte[] data = new byte[length];
-                readFully(data);
+                readFully(own, data);
 
                 String json = new String(data, StandardCharsets.UTF_8);
                 handleFrame(opcode, json);
             } catch (IOException e) {
+                if (pipe != own) return; // closed on purpose
                 // Real connection failure - the pipe is gone, stop for good.
                 System.out.println("[CraftProxy] Discord IPC connection closed: " + e.getMessage());
                 stop();
                 return;
             } catch (Exception e) {
+                if (pipe != own) return;
                 // Anything else (bad JSON, unexpected shape, etc.) - log it, skip this
                 // one frame, and keep the connection alive.
                 System.out.println("[CraftProxy] Ignored malformed Discord IPC frame: " + e);
@@ -186,17 +191,18 @@ public class CraftProxyDiscordIPC {
         onPacket(opcode, parsed.getAsJsonObject());
     }
 
-    private static int readInt() throws IOException {
+    private static int readInt(RandomAccessFile pipe) throws IOException {
         byte[] bytes = new byte[4];
-        readFully(bytes);
+        readFully(pipe, bytes);
         return ByteBuffer.wrap(bytes).getInt();
     }
 
-    private static void readFully(byte[] out) throws IOException {
+    private static void readFully(RandomAccessFile pipe, byte[] out) throws IOException {
         int offset = 0;
 
         while (offset < out.length) {
             while (pipe.length() <= offset) {
+                if (CraftProxyDiscordIPC.pipe != pipe) throw new IOException("Pipe closed");
                 try {
                     Thread.sleep(20);
                 } catch (InterruptedException e) {
