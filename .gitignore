@@ -11,7 +11,7 @@ classes/
 
 # idea
 
-.idea/
+
 *.iml
 *.ipr
 *.iws
@@ -38,3 +38,15 @@ hs_err_*.log
 replay_*.log
 *.hprof
 *.jfr
+
+# stonecutter template
+.env
+.kotlin
+.cache/
+!.idea/
+.idea/*
+!.idea/runConfigurations
+.idea/runConfigurations/*
+!.idea/runConfigurations/Run_Active_Client.xml
+!.idea/runConfigurations/Run_Active_Server.xml
+!.idea/runConfigurations/Client_*.xml
