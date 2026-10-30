@@ -1,7 +1,12 @@
-# Builds the mod for every supported Minecraft version on each push and pull request.
+# Builds the mod for every supported Minecraft version on each branch push and pull request.
+# Tag pushes are left to the release workflow, which builds everything itself.
 
 name: build
-on: [pull_request, push]
+on:
+  pull_request:
+  push:
+    branches:
+      - '**'
 
 jobs:
   build:
