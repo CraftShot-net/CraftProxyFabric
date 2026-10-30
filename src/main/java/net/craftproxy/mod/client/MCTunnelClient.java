@@ -17,6 +17,7 @@ import net.craftproxy.mod.client.rpc.DiscordRPCManager;
 import net.craftproxy.mod.client.screens.SocialScreen;
 import net.craftproxy.mod.client.screens.WardrobeScreen;
 import net.craftproxy.mod.client.utils.HttpUtils;
+import net.craftproxy.mod.client.utils.SkinManager;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
@@ -171,6 +172,7 @@ public class MCTunnelClient implements ClientModInitializer {
         });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            SkinManager.tick(client);
 
             if (pendingHotkeyAction != null) {
                 Runnable action = pendingHotkeyAction;

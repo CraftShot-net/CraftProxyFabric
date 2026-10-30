@@ -182,8 +182,20 @@ public class FriendManager {
 
     private <T> void notifyListeners(List<Consumer<List<T>>> listeners, List<T> data) {
         List<T> snapshot = List.copyOf(data);
+        preloadSkins(snapshot);
         for (Consumer<List<T>> listener : listeners) {
             listener.accept(snapshot);
+        }
+    }
+
+    // Heads are visible in the social menu and toasts; load them before anything is opened.
+    private static void preloadSkins(List<?> entries) {
+        for (Object entry : entries) {
+            if (entry instanceof UserDto user) {
+                SkinManager.preload(user.name(), user.minecraft_uuid());
+            } else if (entry instanceof WorldInviteDto invite) {
+                SkinManager.preload(invite.hostName(), null);
+            }
         }
     }
 

@@ -999,7 +999,7 @@ public class SocialScreen extends UiScreen {
         if (selected) UiRender.roundRect(g, x, y + 7, 2, FRIEND_H - 14, 1, Theme.ACCENT);
 
         boolean online = isOnline(friend.name());
-        Identifier skin = SkinManager.getSkinAsyncPublic(friend.name()).get().texture();
+        Identifier skin = SkinManager.getSkin(friend.name(), friend.minecraft_uuid()).get().texture();
         UiRender.head(g, skin, x + 6, y + 4, 18, bg);
         UiRender.statusDot(g, x + 23, y + 21, 5, online ? Theme.ONLINE : Theme.OFFLINE, bg);
 
@@ -1034,7 +1034,7 @@ public class SocialScreen extends UiScreen {
         int bg = Theme.mix(Theme.SIDEBAR, Theme.SURFACE_HOVER, t);
         if (t > 0.01F) UiRender.roundRect(g, x, y + 1, w, FRIEND_H - 2, 4, bg);
 
-        Identifier skin = SkinManager.getSkinAsyncPublic(request.name()).get().texture();
+        Identifier skin = SkinManager.getSkin(request.name(), request.minecraft_uuid()).get().texture();
         UiRender.head(g, skin, x + 6, y + 4, 18, bg);
 
         int buttonsX = x + w - 36;
@@ -1156,7 +1156,7 @@ public class SocialScreen extends UiScreen {
         // Header
         boolean online = isOnline(friend.name());
         int ay = headerBottom + 7;
-        Identifier skin = SkinManager.getSkinAsyncPublic(friend.name()).get().texture();
+        Identifier skin = SkinManager.getSkin(friend.name(), friend.minecraft_uuid()).get().texture();
         UiRender.head(g, skin, px + 10, ay, 22, Theme.WINDOW);
         UiRender.statusDot(g, px + 30, ay + 20, 6, online ? Theme.ONLINE : Theme.OFFLINE, Theme.WINDOW);
         Component name = Component.literal(friend.name()).withStyle(s -> s.withBold(true));
