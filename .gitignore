@@ -51,3 +51,6 @@ versions/
 !.idea/runConfigurations/Run_Active_Client.xml
 !.idea/runConfigurations/Run_Active_Server.xml
 !.idea/runConfigurations/Client_*.xml
+
+# Cosmetic artwork is managed in the dashboard
+cosmetics-art/

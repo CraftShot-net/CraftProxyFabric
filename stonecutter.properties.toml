@@ -2,7 +2,7 @@
 id = "craftproxy"
 name = "CraftProxy"
 group = "net.craftproxy.mod"
-version = "1.2.1"
+version = "1.2.2"
 channel_tag = ""
 description = "Host your Minecraft World to the public. Only the Host needs the Mod!"
 authors = ["Timeox2k"]
