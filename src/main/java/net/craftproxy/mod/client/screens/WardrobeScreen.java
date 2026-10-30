@@ -1,5 +1,6 @@
 package net.craftproxy.mod.client.screens;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import net.craftproxy.mod.CraftProxy;
 import net.craftproxy.mod.client.compat.ClientCompat;
 import net.craftproxy.mod.client.compat.Gfx;
@@ -16,6 +17,7 @@ import net.craftproxy.mod.client.ui.Theme;
 import net.craftproxy.mod.client.ui.UiButton;
 import net.craftproxy.mod.client.ui.UiRender;
 import net.craftproxy.mod.client.ui.UiScreen;
+import net.craftproxy.mod.client.ui.UiTextField;
 import net.craftproxy.mod.client.utils.SkinManager;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
@@ -66,11 +68,14 @@ public class WardrobeScreen extends UiScreen {
     private boolean loading;
     private String pendingCosmeticId;
     private PlayerCosmeticEntryDto hoveredCosmetic;
+    private boolean redeeming;
 
     // --- Widgets ---
     private WardrobePreviewWidget previewWidget;
     private Supplier<SkinData> cachedSkinSupplier;
     private UiButton closeButton;
+    private UiTextField codeField;
+    private UiButton redeemButton;
     private final ScrollArea gridScroll = new ScrollArea();
     private final Hits hits = new Hits();
     private final Anim.Group<String> hover = new Anim.Group<>();
@@ -114,6 +119,16 @@ public class WardrobeScreen extends UiScreen {
 
         closeButton = UiButton.icon(Icon.CLOSE, UiButton.Style.GHOST, null, () -> ClientCompat.setScreen(null))
                 .bounds(wx + ww - 24, wy + 6, 18, 18);
+
+        // Promo code box at the bottom of the category sidebar.
+        String code = codeField != null ? codeField.getValue() : "";
+        codeField = new UiTextField(this.font, 64, tr("redeem.hint"), null);
+        codeField.setValue(code);
+        codeField.setBounds(wx + 6, wy + wh - 48, catW - 12, 18);
+        this.addRenderableWidget(codeField.box);
+        redeemButton = new UiButton(tr("redeem.button"), null, UiButton.Style.PRIMARY, this::redeemCode)
+                .enabledWhen(() -> WardrobeManager.isInitialized() && !codeField.getValue().isBlank())
+                .bounds(wx + 6, wy + wh - 26, catW - 12, 18);
 
         if (this.previewWidget != null) {
             this.removeWidget(this.previewWidget);
@@ -293,6 +308,35 @@ public class WardrobeScreen extends UiScreen {
                 });
     }
 
+    private void redeemCode() {
+        String code = codeField.getValue().trim();
+        if (redeeming || code.isEmpty() || !WardrobeManager.isInitialized()) return;
+        redeeming = true;
+        WardrobeManager.getInstance().redeemCode(code)
+                .thenAccept(res -> this.minecraft.execute(() -> {
+                    redeeming = false;
+                    if (res.isSuccess()) {
+                        codeField.setValue("");
+                        this.setFocused(null);
+                        activeCategory = ALL;
+                        gridScroll.scrollToTop();
+                        setCosmetics(WardrobeManager.getInstance().getCachedCosmetics());
+                        showNotice(tr("redeem.success", formatCosmeticName(res.cosmeticId())), Icon.SPARKLE, Theme.SUCCESS);
+                    } else {
+                        String key = "redeem.error." + res.error();
+                        String localized = trs(key);
+                        showNotice(localized.equals(TRANSLATION_PREFIX + key) ? tr("redeem.error.invalid_code") : tr(key), Icon.CLOSE, Theme.DANGER);
+                    }
+                }))
+                .exceptionally(ex -> {
+                    this.minecraft.execute(() -> {
+                        redeeming = false;
+                        showNotice(tr("redeem.error.failed"), Icon.CLOSE, Theme.DANGER);
+                    });
+                    return null;
+                });
+    }
+
     // =====================================================================================
     // Rendering
     // =====================================================================================
@@ -400,6 +444,12 @@ public class WardrobeScreen extends UiScreen {
             });
             y += CATEGORY_H;
         }
+
+        UiRender.divider(g, wx + 6, wx + catW - 6, codeField.y - 18, Theme.BORDER);
+        UiRender.text(g, this.font, UiRender.ellipsize(this.font, trs("redeem.title").toUpperCase(Locale.ROOT), catW - 16), wx + 10, codeField.y - 11, Theme.TEXT_MUTED);
+        codeField.draw(g, mx, my);
+        redeemButton.loading = redeeming;
+        drawButton(g, redeemButton, mx, my);
     }
 
     private void drawPreviewPanel(Gfx g) {
@@ -578,8 +628,18 @@ public class WardrobeScreen extends UiScreen {
     protected boolean onMouseClicked(double mx, double my, int button) {
         if (button != 0) return false;
         if (gridScroll.mouseClicked(mx, my)) return true;
-        if (closeButton.click(mx, my)) return true;
+        if (closeButton.click(mx, my) || redeemButton.click(mx, my)) return true;
+        if (clickField(codeField, mx, my)) return true;
         return hits.click(mx, my, button);
+    }
+
+    @Override
+    protected boolean onKey(int key) {
+        if ((key == InputConstants.KEY_RETURN || key == InputConstants.KEY_NUMPADENTER) && codeField.isFocused()) {
+            redeemCode();
+            return true;
+        }
+        return false;
     }
 
     @Override

@@ -2,12 +2,14 @@ package net.craftproxy.mod.client.managers;
 
 import net.craftproxy.mod.client.dto.MyCosmeticsResponseDto;
 import net.craftproxy.mod.client.dto.MyCosmeticsResponseDto.PlayerCosmeticEntryDto;
+import net.craftproxy.mod.client.dto.RedeemCodeResponseDto;
 import net.craftproxy.mod.client.dto.ToggleEquipResponseDto;
 import net.craftproxy.mod.client.utils.HttpUtils;
 import net.minecraft.client.Minecraft;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -113,6 +115,31 @@ public class WardrobeManager {
                 return toggleDto;
             }
             throw new RuntimeException("Failed to toggle cosmetic: " + res.status());
+        });
+    }
+
+    /**
+     * Redeems a promo code. Rejections the player should see (expired, unknown, ...) complete normally
+     * with {@link RedeemCodeResponseDto#error()} set; only connection or server failures complete exceptionally.
+     */
+    public CompletableFuture<RedeemCodeResponseDto> redeemCode(String code) {
+        return CompletableFuture.supplyAsync(() -> {
+            HttpUtils.Response res = api.post("/api/redeem", Map.of("code", code));
+            if (res.isSuccessful()) {
+                RedeemCodeResponseDto redeemed = res.as(RedeemCodeResponseDto.class);
+                // The new item is owned and equipped server side now; reload so the grid and cape follow.
+                fetchMyCosmetics().join();
+                return redeemed;
+            }
+            if (res.status() == 429) {
+                return new RedeemCodeResponseDto(null, "rate_limited", null, null, false, null);
+            }
+            if (res.status() == 404 || res.status() == 409 || res.status() == 410 || res.status() == 422) {
+                RedeemCodeResponseDto rejected = res.as(RedeemCodeResponseDto.class);
+                String error = rejected != null && rejected.error() != null ? rejected.error() : "invalid_code";
+                return new RedeemCodeResponseDto(null, error, null, null, false, null);
+            }
+            throw new RuntimeException("Failed to redeem code: " + res.status());
         });
     }
 
